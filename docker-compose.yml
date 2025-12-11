@@ -31,12 +31,12 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/${POSTGRES_DB:-invoice_db}
-      - FLASK_ENV=${FLASK_ENV:-development}
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-jwt-secret-key}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PORT=8000
     ports:
-      - "5000:5000"
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,26 +45,6 @@ services:
     volumes:
       - ./backend:/app
       - backend_uploads:/app/uploads
-
-  # AI Chatbot Service
-  chatbot:
-    build:
-      context: ./chatbot
-      dockerfile: Dockerfile
-    container_name: invoice_chatbot
-    restart: unless-stopped
-    environment:
-      - FLASK_ENV=${FLASK_ENV:-development}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - BACKEND_API_URL=http://backend:5000
-    ports:
-      - "5001:5001"
-    depends_on:
-      - backend
-    networks:
-      - invoice_network
-    volumes:
-      - ./chatbot:/app
 
   # Frontend Service (React + Vite with Nginx)
   frontend:
@@ -81,6 +61,7 @@ services:
       - invoice_network
     environment:
       - NODE_ENV=production
+      - VITE_API_URL=http://backend:8000
 
 networks:
   invoice_network:
