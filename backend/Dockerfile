@@ -4,6 +4,9 @@ FROM python:3.10-slim
 # Set working directory
 WORKDIR /app
 
+# Set Python path to include /app
+ENV PYTHONPATH=/app:$PYTHONPATH
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
