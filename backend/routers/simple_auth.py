@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import jwt
 import bcrypt
 
-router = APIRouter(tags=["authentication"])
+router = APIRouter(prefix="/auth", tags=["authentication"])
 
 # Mock user storage (in-memory)
 MOCK_USERS = {}
@@ -58,10 +58,22 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister):
     """
-    Register new user (Mock - in-memory storage)
+    Register new user - saves to database
     """
+    # Get database tools (PostgreSQL or SQLite based on .env)
+    import os
+    database_url = os.getenv('DATABASE_URL', '')
+    
+    if database_url and not database_url.startswith('sqlite'):
+        from utils.database_tools_postgres import get_database_tools
+    else:
+        from utils.database_tools_sqlite import get_database_tools
+    
+    db_tools = get_database_tools()
+    
     # Check if user exists
-    if user_data.email in MOCK_USERS:
+    existing_user = db_tools.get_user_by_email(user_data.email)
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
@@ -72,20 +84,30 @@ async def register(user_data: UserRegister):
     salt = bcrypt.gensalt()
     hashed_password = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
     
-    # Store user
-    MOCK_USERS[user_data.email] = {
+    # Determine role
+    role = "admin" if "admin" in user_data.email.lower() else "user"
+    
+    # Save user to database
+    user_id = db_tools.save_user({
         "email": user_data.email,
         "name": user_data.name or user_data.email.split("@")[0],
         "hashed_password": hashed_password,
-        "role": "admin" if "admin" in user_data.email.lower() else "user",
-        "created_at": datetime.utcnow().isoformat()
-    }
+        "role": role,
+        "is_active": 1,
+        "is_admin": 1 if role == "admin" else 0
+    })
+    
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user"
+        )
     
     # Create token
     access_token = create_access_token(
         data={
             "sub": user_data.email,
-            "role": MOCK_USERS[user_data.email]["role"]
+            "role": role
         }
     )
     
@@ -94,8 +116,8 @@ async def register(user_data: UserRegister):
         "token_type": "bearer",
         "user": {
             "email": user_data.email,
-            "name": MOCK_USERS[user_data.email]["name"],
-            "role": MOCK_USERS[user_data.email]["role"]
+            "name": user_data.name or user_data.email.split("@")[0],
+            "role": role
         }
     }
 
@@ -103,10 +125,21 @@ async def register(user_data: UserRegister):
 @router.post("/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
     """
-    Login user (Mock authentication)
+    Login user - authenticates against database
     """
+    # Get database tools (PostgreSQL or SQLite based on .env)
+    import os
+    database_url = os.getenv('DATABASE_URL', '')
+    
+    if database_url and not database_url.startswith('sqlite'):
+        from utils.database_tools_postgres import get_database_tools
+    else:
+        from utils.database_tools_sqlite import get_database_tools
+    
+    db_tools = get_database_tools()
+    
     # Check if user exists
-    user = MOCK_USERS.get(credentials.email)
+    user = db_tools.get_user_by_email(credentials.email)
     
     if not user:
         raise HTTPException(
@@ -122,6 +155,9 @@ async def login(credentials: UserLogin):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
+    
+    # Update last login
+    db_tools.update_user_last_login(credentials.email)
     
     # Create token
     access_token = create_access_token(

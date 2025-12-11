@@ -60,7 +60,7 @@ class OCRService:
 
         # Detect invoice type with improved priority logic
         has_momo_keywords = any(word in text_lower for word in ['momo', 'ví điện tử', 'momo wallet', 'transfer', 'chuyển khoản'])
-        has_electricity_keywords = any(word in text_lower for word in ['điện', 'electricity', 'tiền điện', 'hóa đơn tiền điện', 'kwh', 'evn', 'điện lực', 'nhà cung cấp'])
+        has_electricity_keywords = any(word in text_lower for word in ['điện', 'electricity', 'tiền điện', 'hóa đơn tiền điện', 'kwh', 'evn', 'điện lực', 'ctdl', 'vinh long', 'nhà cung cấp'])
 
         # If both MoMo and electricity keywords are present, prioritize electricity
         if has_electricity_keywords:
@@ -97,7 +97,8 @@ class OCRService:
         data['invoice_type'] = 'momo_payment'
         data['seller_name'] = 'MoMo Payment'
 
-        logger.info(f"🔍 Processing MoMo invoice. OCR text preview: {ocr_text[:200]}...")
+        logger.info(f"🔍 Processing MoMo invoice. OCR text preview: {ocr_text[:300]}...")
+        logger.info(f"📄 Full OCR text length: {len(ocr_text)} characters")
 
         # Extract transaction ID
         transaction_id_patterns = [
@@ -369,7 +370,8 @@ class OCRService:
                             logger.info(f"✅ Found dash-indicated electricity amount: {data['total_amount']}")
                             return data
                     else:
-                        if 100 <= numeric_value <= 100000000:
+                        # General validation: at least 1,000 VND for MoMo
+                        if 1000 <= numeric_value <= 100000000:
                             data['total_amount'] = f"{numeric_value:,.0f} VND"
                             data['total_amount_value'] = numeric_value
                             data['subtotal'] = numeric_value
@@ -383,24 +385,42 @@ class OCRService:
         amount_patterns = []
         if is_momo:
             amount_patterns = [
-                r'(?:số tiền|amount|giá trị|tổng tiền|thành tiền)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|vnd|đồng))?',
-                r'(?:thành tiền|total|tổng|tổng cộng)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|vnd|đồng))?',
-                r'(?:số tiền chuyển|transfer amount|chuyển khoản)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|vnd|đồng))?',
-                r'(?:Amount|Total|Value)[:\s]*([0-9,\.]+)(?:\s*(?:VND|đ|VNĐ))?',
-                r'(?:Transfer|Payment)[:\s]*([0-9,\.]+)(?:\s*(?:VND|đ|VNĐ))?',
-                r'([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|vnd|đồng))\s*$',
-                r'([0-9,\.]+)\s*$',
-                r'(?:số tiền|amount|tổng)[:\s]*([0-9,\.]+)',
+                # HIGHEST PRIORITY: Amount with explicit currency marker
+                # Match: "50.000d", "500.000đ", "1.000.000 VND"
+                r'([0-9]{1,3}(?:[,\.][0-9]{3})+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                r'([0-9]+(?:[,\.][0-9]+)+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                
+                # HIGH PRIORITY: Labeled amounts
+                r'(?:số tiền chuyển|transfer amount|chuyển khoản)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|đồng))?',
+                r'(?:số tiền|amount|giá trị)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|đồng))?',
+                r'(?:tổng tiền|thành tiền|total|tổng cộng)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|đồng))?',
+                r'(?:Transfer|Payment|Amount)\s*[:\s]*([0-9,\.]+)(?:\s*(?:VND|đ|VNĐ))?',
+                
+                # MEDIUM PRIORITY: Currency markers with symbols
+                r'[+\-]\s*([0-9,\.]+)\s*(?:d|đ|vnd|vnđ|đồng)',
+                
+                # LOW PRIORITY: Fallback patterns (only if nothing else matches)
+                # These are commented out to prevent false matches
+                # r'([0-9,\.]+)\s*$',
             ]
         elif is_electricity:
             amount_patterns = [
+                # HIGHEST PRIORITY: Amount with explicit currency marker and dash
+                # Match: "-294.948d", "(308.472d)", "@ ) -294.948d"
+                r'(?:-|@[\)\s]*-)\s*([0-9]{1,3}(?:[,\.][0-9]{3})+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                r'(?:-|@[\)\s]*-)\s*([0-9]+(?:[,\.][0-9]+)+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                r'\(\s*([0-9]{1,3}(?:[,\.][0-9]{3})+)\s*(?:d|đ|vnd|vnđ|đồng|VND)\s*\)',
+                
+                # HIGH PRIORITY: Currency marker without dash
+                r'([0-9]{1,3}(?:[,\.][0-9]{3})+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                
+                # MEDIUM PRIORITY: Labeled amounts
                 r'(?:số tiền|amount|total|tổng tiền|tổng cộng)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?',
-                r'(?:số tiền|amount|total|tổng tiền|tổng cộng)\s+([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?',
                 r'(?:thành tiền|tổng|total)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?',
-                r'([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?\s*$',
-                r'-\s*([0-9,\.]+)d?',
-                r'\(\s*([0-9,\.]+)d?\s*\)',
-                r'@[\)\s]*-\s*([0-9,\.]+)d?',
+                
+                # LOW PRIORITY: Dash/parentheses without currency (commented to prevent year matches)
+                # r'-\s*([0-9,\.]+)',
+                # r'\(\s*([0-9,\.]+)\s*\)',
             ]
         else:  # traditional
             amount_patterns = [
@@ -435,11 +455,15 @@ class OCRService:
                             data['subtotal'] = numeric_value
                             return data
                     elif is_momo:
-                        if 100 <= numeric_value <= 100000000:
+                        # MoMo amounts should be reasonable (at least 1,000 VND)
+                        if 1000 <= numeric_value <= 100000000:
                             data['total_amount'] = f"{numeric_value:,.0f} VND"
                             data['total_amount_value'] = numeric_value
                             data['subtotal'] = numeric_value
+                            logger.info(f"✅ Found MoMo amount: {data['total_amount']}")
                             return data
+                        else:
+                            logger.warning(f"⚠️ Rejected amount {numeric_value} (out of range 1,000-100,000,000)")
                     else:  # traditional
                         data['total_amount'] = f"{amount_str} VND"
                         try:
@@ -659,6 +683,28 @@ class OCRService:
         ocr_text = ""
         extracted_data = {}
         final_confidence = 0.0
+        saved_filepath = None
+
+        # Save file to uploads directory for permanent storage
+        try:
+            uploads_dir = "uploads"
+            os.makedirs(uploads_dir, exist_ok=True)
+            
+            # Generate unique filename to avoid collisions
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            name_parts = os.path.splitext(filename)
+            unique_filename = f"{name_parts[0]}_{timestamp}{name_parts[1]}"
+            file_path_windows = os.path.join(uploads_dir, unique_filename)
+            
+            with open(file_path_windows, 'wb') as f:
+                f.write(file_content)
+            
+            # Store path with forward slashes for URLs
+            saved_filepath = f"{uploads_dir}/{unique_filename}"
+            logger.info(f"💾 Saved uploaded file to: {saved_filepath}")
+        except Exception as save_err:
+            logger.error(f"❌ Failed to save file: {save_err}")
+            saved_filepath = None
 
         # Save to temporary file and try OCR
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
@@ -694,16 +740,28 @@ class OCRService:
             extracted_data = self.extract_invoice_fields(ocr_text, filename)
 
             # Calculate confidence
-            text_confidence = min(len(ocr_text) / 500, 1.0)
+            text_confidence = min(len(ocr_text) / 500, 1.0) if ocr_text else 0.0
             pattern_confidence = self.calculate_pattern_confidence(extracted_data)
+            
+            # Ensure both values are valid numbers
+            if not isinstance(text_confidence, (int, float)) or text_confidence != text_confidence:  # Check for NaN
+                text_confidence = 0.5
+            if not isinstance(pattern_confidence, (int, float)) or pattern_confidence != pattern_confidence:
+                pattern_confidence = 0.5
+            
             final_confidence = (text_confidence + pattern_confidence) / 2
+            final_confidence = max(confidence_threshold, final_confidence)
+            
+            # Ensure final confidence is valid
+            if not isinstance(final_confidence, (int, float)) or final_confidence != final_confidence:
+                final_confidence = confidence_threshold
 
             ocr_result = {
                 "status": "success",
                 "filename": filename,
                 "extracted_data": extracted_data,
-                "confidence_score": max(confidence_threshold, final_confidence),
-                "raw_text": ocr_text[:1000],
+                "confidence_score": final_confidence,
+                "raw_text": ocr_text[:1000] if ocr_text else "",
                 "message": f"✅ Xử lý OCR thành công cho {filename}"
             }
 
@@ -739,9 +797,9 @@ class OCRService:
                              buyer_tax_id, seller_tax_id, buyer_address, seller_address,
                              items, currency, subtotal, tax_amount, tax_percentage,
                              total_amount_value, transaction_id, payment_method,
-                             payment_account, invoice_time, due_date, created_at)
+                             payment_account, invoice_time, due_date, filepath, created_at)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             RETURNING id
                         """, (
                             filename,
@@ -768,6 +826,7 @@ class OCRService:
                             invoice_data.get('payment_account', ''),
                             invoice_data.get('invoice_time', None),
                             invoice_data.get('due_date', None),
+                            saved_filepath,  # Save file path to database
                             datetime.now()
                         ))
                         result = cursor.fetchone()

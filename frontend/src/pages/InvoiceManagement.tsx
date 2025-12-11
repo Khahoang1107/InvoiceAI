@@ -51,17 +51,22 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
       });
       
       if (response.ok) {
-        const data = await response.json();
-        setInvoices(data.invoices);
+        const result = await response.json();
+        // Backend returns { success, message, data: [...], count }
+        setInvoices(result.data || result.invoices || []);
+      } else {
+        console.error('Failed to fetch invoices:', response.status);
+        setInvoices([]);
       }
     } catch (error) {
       console.error('Error fetching invoices:', error);
+      setInvoices([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => {
+  const filteredInvoices = (invoices || []).filter(inv => {
     const matchesSearch = 
       inv.invoice_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
       inv.buyer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -407,7 +412,7 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
             </button>
             <div className="p-4">
               <img
-                src={`/api/invoices/image/${viewingImage}`}
+                src={viewingImage?.startsWith('uploads/') ? `/${viewingImage}` : `/uploads/${viewingImage}`}
                 alt="Invoice"
                 className="max-w-full max-h-[80vh] object-contain mx-auto"
                 onError={(e) => {

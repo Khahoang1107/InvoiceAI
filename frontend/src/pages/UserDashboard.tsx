@@ -137,8 +137,8 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         });
         
         if (response.ok) {
-          const data = await response.json();
-          const invoices = data.invoices;
+          const result = await response.json();
+          const invoices = result.data || result.invoices || [];
           
           setIsTyping(false);
           
@@ -147,26 +147,32 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
             return;
           }
           
-          let message = `📋 **Danh sách hóa đơn**\n━━━━━━━━━━━━━━━━━━━━\nTổng số: ${invoices.length} hóa đơn\n\n`;
+          // Only show latest 10 invoices
+          const displayLimit = 10;
+          const displayInvoices = invoices.slice(0, displayLimit);
+          const hasMore = invoices.length > displayLimit;
           
-          invoices.forEach((inv: any, idx: number) => {
+          let message = `📋 **Danh sách hóa đơn**\n\n`;
+          message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+          message += `Tổng: **${invoices.length}** hóa đơn${hasMore ? ` (hiển thị ${displayLimit} mới nhất)` : ''}\n\n`;
+          
+          displayInvoices.forEach((inv: any, idx: number) => {
             const confidenceIcon = inv.confidence >= 0.8 ? '✅' : inv.confidence >= 0.6 ? '⚠️' : '❌';
             const typeIcon = inv.invoice_type === 'momo_payment' ? '💳' : inv.invoice_type === 'electricity' ? '⚡' : '📄';
+            const typeName = inv.invoice_type === 'momo_payment' ? 'MoMo' : inv.invoice_type === 'electricity' ? 'Điện' : 'Khác';
             
-            message += `【${idx + 1}】 **${inv.invoice_code}**\n`;
-            message += `━━━━━━━━━━━━━━━━\n`;
-            message += `${typeIcon} Loại: ${inv.invoice_type === 'momo_payment' ? 'MoMo' : inv.invoice_type === 'electricity' ? 'Hóa đơn điện' : 'Thông thường'}\n`;
-            message += `📅 Ngày: ${inv.date}\n`;
-            message += `🏢 Người bán:\n   ${inv.seller_name}\n`;
-            message += `👤 Người mua:\n   ${inv.buyer_name}\n`;
-            message += `💰 Tổng tiền:\n   ${inv.total_amount}\n`;
-            message += `${confidenceIcon} Độ tin cậy: ${(inv.confidence * 100).toFixed(1)}%\n`;
-            message += `⏰ Xử lý lúc: ${inv.processed_at}\n`;
-            message += `\n`;
+            // Each field on separate line - use double \n for paragraph breaks
+            message += `【${idx + 1}】 ${typeIcon} **${inv.invoice_code}** (${typeName})  \n`;
+            message += `📅 Ngày: ${inv.date}  \n`;
+            message += `🏢 Người bán: ${inv.seller_name}  \n`;
+            message += `👤 Người mua: ${inv.buyer_name}  \n`;
+            message += `💰 Số tiền: **${inv.total_amount}**  \n`;
+            message += `${confidenceIcon} Độ tin cậy: ${(inv.confidence * 100).toFixed(0)}%\n\n`;
+            message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
           });
           
-          message += '━━━━━━━━━━━━━━━━━━━━\n';
-          message += '💡 Gõ mã hóa đơn để xem chi tiết';
+          message += '💡 Gõ mã hóa đơn để xem chi tiết  \n';
+          message += '📊 Gõ "xuất báo cáo" để xem tất cả';
           
           addBotMessage(message);
         } else {
@@ -180,7 +186,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         addBotMessage('📅 **Lọc hóa đơn theo ngày**\n\nVui lòng nhập khoảng thời gian (ví dụ: "hóa đơn trong tháng 11" hoặc "từ 01/11 đến 30/11")');
       } else if (action.includes('Xuất báo cáo')) {
         setIsTyping(false);
-        addBotMessage('📊 **Đang chuyển đến trang quản lý hóa đơn...**\n\nTại đây bạn có thể:\n• Xem tất cả hóa đơn dạng bảng\n• Tìm kiếm và lọc\n• Xuất Excel hoặc PDF');
+        addBotMessage('📊 **Xuất báo cáo hóa đơn**\n\n🎯 Chuyển đến trang quản lý hóa đơn để:\n\n• ✅ Xem tất cả hóa đơn dạng bảng\n• 🔍 Tìm kiếm và lọc theo ngày/loại\n• 📥 Xuất Excel hoặc PDF\n• ✏️ Chỉnh sửa và xóa hóa đơn\n\n💡 Đang chuyển trang...');
         
         setTimeout(() => {
           setCurrentView('invoices');
@@ -211,15 +217,20 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       return true;
     }
     
-    // Filter by date command
-    if (cmd.includes('lọc') || (cmd.includes('hóa đơn') && (cmd.includes('ngày') || cmd.includes('tháng') || cmd.includes('hôm nay')))) {
-      await handleActionButton('📅 Lọc theo ngày');
+    // Export invoice commands - MUST come before filter commands
+    if (cmd.includes('xuất') && cmd.includes('hóa đơn')) {
+      await handleActionButton('📊 Xuất báo cáo');
       return true;
     }
     
-    // Export report command - redirect to invoice management page
     if (cmd.includes('xuất') && (cmd.includes('báo cáo') || cmd.includes('excel') || cmd.includes('pdf') || cmd.includes('file'))) {
       await handleActionButton('📊 Xuất báo cáo');
+      return true;
+    }
+    
+    // Filter by date command
+    if (cmd.includes('lọc') || (cmd.includes('hóa đơn') && (cmd.includes('ngày') || cmd.includes('tháng')) && !cmd.includes('xuất'))) {
+      await handleActionButton('📅 Lọc theo ngày');
       return true;
     }
     
@@ -391,7 +402,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       message += `• **Tổng cộng: ${invoice.total_amount}**\n`;
       
       // Add items if available
-      if (invoice.items && invoice.items.length > 0) {
+      if (invoice.items && Array.isArray(invoice.items) && invoice.items.length > 0) {
         message += `\n📦 **Sản phẩm/Dịch vụ:**\n`;
         invoice.items.forEach((item: any, index: number) => {
           message += `${index + 1}. ${item.name || item.description || 'Không rõ'}`;
@@ -406,6 +417,23 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
           }
           message += '\n';
         });
+      } else if (invoice.items && typeof invoice.items === 'string') {
+        // If items is a JSON string, try to parse it
+        try {
+          const parsedItems = JSON.parse(invoice.items);
+          if (Array.isArray(parsedItems) && parsedItems.length > 0) {
+            message += `\n📦 **Sản phẩm/Dịch vụ:**\n`;
+            parsedItems.forEach((item: any, index: number) => {
+              message += `${index + 1}. ${item.name || item.description || 'Không rõ'}`;
+              if (item.quantity) message += ` - SL: ${item.quantity}`;
+              if (item.price) message += ` - ${item.price.toLocaleString('vi-VN')} VNĐ`;
+              if (item.amount) message += ` (Tổng: ${item.amount.toLocaleString('vi-VN')} VNĐ)`;
+              message += '\n';
+            });
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
       }
       
       // Show OCR text preview if available
@@ -927,7 +955,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
                             : 'bg-gray-100 text-gray-800 rounded-tl-sm'
                         } shadow-sm`}
                       >
-                        <p className="text-sm leading-relaxed">{message.text}</p>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.text}</p>
                       </div>
                       <span className="text-xs text-muted-foreground mt-1 px-2">
                         {message.time}

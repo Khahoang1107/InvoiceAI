@@ -1,114 +1,154 @@
-# API Router: Chat Messaging
+# API Router: Chat Messaging with Groq AI
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from schemas.models import ChatRequest, ChatResponse
-from services.chat_service import ChatService
-from core.logging import logger
+from fastapi import APIRouter, HTTPException, status, Depends
+from typing import Optional
+from pydantic import BaseModel
+import logging
+import os
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+router = APIRouter(tags=["chat"])
 
+class ChatMessage(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
 
-async def get_chat_service() -> ChatService:
-    """Dependency for chat service"""
-    return ChatService()
+# Global chat handler instance (initialized on first use)
+_chat_handler = None
 
-
-@router.post("/send", response_model=ChatResponse)
-async def send_message(
-    request: ChatRequest,
-    user_id: int,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """
-    Send message and get AI response
+def get_chat_handler():
+    """Initialize and return Groq chat handler"""
+    global _chat_handler
     
-    Args:
-        request: Chat request with message content
-        user_id: ID of user sending message
-        
-    Returns:
-        ChatResponse with AI response
+    if _chat_handler is None:
+        try:
+            # Get database tools based on DATABASE_URL
+            database_url = os.getenv('DATABASE_URL', '')
+            
+            if database_url and not database_url.startswith('sqlite'):
+                from utils.database_tools_postgres import get_database_tools
+            else:
+                from utils.database_tools_sqlite import get_database_tools
+            
+            db_tools = get_database_tools()
+            
+            # Import and setup Groq tools
+            from groq_tools import GroqDatabaseTools
+            groq_tools = GroqDatabaseTools(db_tools)
+            
+            # Import and setup Groq handler
+            from handlers.groq_chat_handler import GroqChatHandler
+            _chat_handler = GroqChatHandler(db_tools=db_tools, groq_tools=groq_tools)
+            
+            logger.info("✅ Groq chat handler initialized successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to initialize Groq handler: {e}")
+            _chat_handler = None
+    
+    return _chat_handler
+
+@router.post("/chat")
+async def chat(request: ChatMessage):
+    """
+    Chat endpoint - Process message through Groq AI
+    
+    Features:
+    - Natural language understanding
+    - Database operations via function calling
+    - Context-aware responses
+    - Invoice management commands
     """
     try:
-        logger.info(f"Chat message from user {user_id}: {request.message[:50]}...")
+        logger.info(f"Chat message: {request.message[:50]}...")
         
-        response = await chat_service.send_message(user_id, request)
+        # Get or initialize chat handler
+        chat_handler = get_chat_handler()
         
-        logger.info(f"Chat response sent to user {user_id}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"Chat processing failed for user {user_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process chat message"
-        )
+        if chat_handler is None:
+            # Fallback response with basic intent recognition when Groq not available
+            message_lower = request.message.lower().strip()
+            
+            # Check for export/xuất intent
+            export_keywords = ["xuất", "export", "tải", "download", "báo cáo", "excel"]
+            if any(keyword in message_lower for keyword in export_keywords):
+                return {
+                    "response": """📊 **Xuất báo cáo hóa đơn**
 
+Vui lòng chọn:
+1. **Xuất Excel tất cả** - Tất cả hóa đơn
+2. **Xuất Excel hôm nay** - Hóa đơn hôm nay
+3. **Xuất Excel theo loại** - Lọc theo loại hóa đơn
 
-@router.get("/history/{conversation_id}")
-async def get_conversation_history(
-    conversation_id: str,
-    user_id: int,
-    limit: int = 50,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """
-    Get conversation history
-    
-    Args:
-        conversation_id: ID of conversation
-        user_id: ID of user
-        limit: Maximum messages to return (default 50)
+💡 Hoặc vào phần **"Quản lý hóa đơn"** → Chọn hóa đơn → Nhấn nút **"Xuất Excel"**""",
+                    "conversation_id": request.conversation_id or "default",
+                    "success": True,
+                    "type": "export_guide"
+                }
+            
+            # Check for statistics/thống kê intent
+            stats_keywords = ["thống kê", "statistics", "tổng", "số lượng", "bao nhiêu"]
+            if any(keyword in message_lower for keyword in stats_keywords):
+                try:
+                    # Get database tools
+                    database_url = os.getenv('DATABASE_URL', '')
+                    if database_url and not database_url.startswith('sqlite'):
+                        from utils.database_tools_postgres import get_database_tools
+                    else:
+                        from utils.database_tools_sqlite import get_database_tools
+                    
+                    db_tools = get_database_tools()
+                    stats = db_tools.get_statistics()
+                    
+                    return {
+                        "response": f"""📊 **Thống kê hóa đơn**
+
+📋 Tổng số hóa đơn: **{stats.get('total_invoices', 0)}**
+💰 Tổng tiền: **{stats.get('total_amount_sum', 0):,.0f} VND**
+📅 7 ngày gần nhất: **{stats.get('recent_7days', 0)}** hóa đơn""",
+                        "conversation_id": request.conversation_id or "default",
+                        "success": True,
+                        "type": "statistics"
+                    }
+                except Exception as e:
+                    logger.error(f"Error getting statistics: {e}")
+            
+            # Default fallback
+            return {
+                "response": """⚠️ Groq AI chưa được cấu hình.
+
+🎯 Tôi có thể giúp bạn:
+1. 📋 Xem danh sách hóa đơn
+2. 🔍 Tìm kiếm hóa đơn
+3. 📊 Xem thống kê
+4. 📤 Xuất báo cáo Excel
+
+Vui lòng kiểm tra GROQ_API_KEY trong file .env""",
+                "conversation_id": request.conversation_id or "default",
+                "success": False,
+                "type": "error"
+            }
         
-    Returns:
-        List of messages in conversation
-    """
-    try:
-        if limit < 1 or limit > 100:
-            limit = 50
+        # Process message through Groq
+        user_id = request.conversation_id or "default"
+        response = await chat_handler.chat(request.message, user_id=user_id)
         
-        logger.info(f"Retrieving history for conversation {conversation_id}")
-        
-        history = await chat_service.get_conversation_history(user_id, conversation_id, limit)
-        
+        # Format response for frontend
         return {
-            "conversation_id": conversation_id,
-            "messages": history,
-            "count": len(history) if history else 0
+            "response": response.get("message", ""),
+            "conversation_id": user_id,
+            "success": True,
+            "type": response.get("type", "text"),
+            "metadata": {
+                "model": response.get("model"),
+                "method": response.get("method"),
+                "tools_used": response.get("tools_used", [])
+            }
         }
         
     except Exception as e:
-        logger.error(f"Failed to retrieve conversation history: {str(e)}")
+        logger.error(f"Chat failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve conversation history"
+            detail=f"Chat failed: {str(e)}"
         )
 
-
-@router.delete("/conversation/{conversation_id}")
-async def delete_conversation(
-    conversation_id: str,
-    user_id: int,
-    chat_service: ChatService = Depends(get_chat_service)
-):
-    """
-    Delete conversation and all associated messages
-    
-    Args:
-        conversation_id: ID of conversation to delete
-        user_id: ID of user (verify ownership)
-    """
-    try:
-        logger.info(f"Deleting conversation {conversation_id} for user {user_id}")
-        
-        # TODO: Implement delete logic in ChatService
-        # await chat_service.delete_conversation(user_id, conversation_id)
-        
-        return {"success": True, "message": f"Conversation {conversation_id} deleted"}
-        
-    except Exception as e:
-        logger.error(f"Failed to delete conversation: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete conversation"
-        )
