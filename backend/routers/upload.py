@@ -1,8 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
 from pathlib import Path
-from ..schemas.models import FileUploadResponse, OCRResult, InvoiceResponse
-from ..services.file_upload_service import FileUploadService
-from ..core.logging import logger
+from schemas.models import FileUploadResponse, OCRResult, InvoiceResponse
+from services.file_upload_service import FileUploadService
+from core.logging import logger
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 router = APIRouter(prefix="/api/upload", tags=["file-upload"])
@@ -16,7 +16,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         # Extract token from Authorization header
         token = credentials.credentials
         # Get user service and verify token
-        from ..services.user_service import UserService
+        from services.user_service import UserService
         user_service = UserService()
         user_id = user_service.verify_token(token)
         user = await user_service.get_user_by_id(user_id)

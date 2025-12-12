@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import logging
 import os
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from .auth import get_current_user as get_current_user_auth
+from routers.auth import get_current_user as get_current_user_auth
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -18,7 +18,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         # Extract token from Authorization header
         token = credentials.credentials
         # Get user service and verify token
-        from ..services.user_service import UserService
+        from services.user_service import UserService
         user_service = UserService()
         user_id = user_service.verify_token(token)
         user = await user_service.get_user_by_id(user_id)

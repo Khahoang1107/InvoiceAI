@@ -23,67 +23,47 @@ Hệ thống quản lý hóa đơn thông minh với AI chatbot tích hợp, đ�
 
 ## 🏗️ Kiến trúc hệ thống (v2.1)
 
-````
+```
 ┌──────────────────────────────────────────────────┐
-│   Frontend (React)  :4173                        │
+│   Frontend (React)  :3000                        │
 └─────────────────────┬──────────────────────────┘
                       │
 ┌─────────────────────▼──────────────────────────┐
 │   FastAPI Backend (Unified) :8000 ✨           │
-│   ├─ /chat (Groq LLM)                         │
-│   ├─ /upload-image (async OCR)                │
-│   ├─ /api/invoices (CRUD)                     │
-│   ├─ /api/ocr/enqueue & /api/ocr/job/{id}    │
-│   └─ /docs (Swagger UI)                       │
+│   ├─ /api/auth (JWT Authentication)            │
+│   ├─ /api/chat (Groq LLM)                      │
+│   ├─ /api/upload (async OCR + DB storage)     │
+│   ├─ /api/images/{id} (serve stored images)   │
+│   ├─ /api/invoices (CRUD)                      │
+│   ├─ /api/export (Excel/PDF/CSV export)       │
+│   └─ /docs (Swagger UI)                        │
 └─────────────────────┬──────────────────────────┘
                       │
         ┌─────────────┴──────────────┐
         │                            │
         ▼                            ▼
   PostgreSQL DB            OCR Worker (Python)
-                           (polls & processes jobs)
+  (Railway Cloud)          (background processing)
+```
 
 ## 🚀 Khởi động nhanh
 
-### With Docker (Recommended)
-```bash
-# 1. Clone repository
-git clone <your-repo-url>
-cd DoAnCN
-
-# 2. Create .env file
-cp .env.example .env
-# Edit GROQ_API_KEY in .env
-
-# 3. Start services with docker-compose
-docker-compose up -d
-
-# 4. Access application
-# Frontend: http://localhost:4173
-# Backend (FastAPI): http://localhost:8000
-# API Docs: http://localhost:8000/docs
-````
-
-### Local Development (Recommended for Development)
+### Local Development (Recommended)
 
 ```bash
-# Terminal 1: Start FastAPI Backend (all services unified)
+# Terminal 1: Start FastAPI Backend
 cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
+python main_refactored.py
 
-# Terminal 2: Start OCR Worker (background processing)
-cd backend
-python worker.py
-
-# Terminal 3: Start Frontend
+# Terminal 2: Start Frontend
 cd frontend
-npm install
 npm run dev
 
 # Access:
-# Frontend: http://localhost:4173
-# API: http://localhost:8000
-# Docs: http://localhost:8000/docs
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+# Health Check: http://localhost:8000/health
 ```
 
 ## 📋 API Documentation
@@ -98,25 +78,32 @@ Hệ thống cung cấp RESTful API hoàn chỉnh:
 ### Main Endpoints:
 
 ```bash
+# Authentication
+POST   /api/auth/register          # Register new user
+POST   /api/auth/login             # Login and get JWT token
+GET    /api/auth/me                # Get current user info
+
 # Chat & AI
-POST   /chat               # Chat with Groq AI
-POST   /chat/simple        # Simple chat
-POST   /ai/test            # Test AI
+POST   /api/chat                   # Chat with Groq AI
 
 # Upload & OCR (Async)
-POST   /upload-image       # Upload invoice (returns immediately)
-GET    /api/ocr/job/{id}   # Check OCR job status
-POST   /api/ocr/enqueue    # Enqueue OCR manually
+POST   /api/upload                 # Upload invoice (OCR processing + DB storage)
+GET    /api/images/{image_id}      # Get stored image from database
 
 # Invoices Management
-GET    /api/invoices/list  # Danh sách hóa đơn
-POST   /api/invoices/list  # Create invoice
-GET    /api/invoices/{id}  # Chi tiết hóa đơn
+GET    /api/invoices               # List invoices
+POST   /api/invoices               # Create invoice
+GET    /api/invoices/{id}          # Get invoice details
+PUT    /api/invoices/{id}          # Update invoice
+DELETE /api/invoices/{id}          # Delete invoice
+
+# Export
+GET    /api/export/invoices        # Export invoices (Excel/PDF/CSV)
 
 # System
-GET    /health             # Health check
-GET    /                   # API Home + Docs
-GET    /docs               # Swagger UI
+GET    /health                     # Health check
+GET    /                           # API Home + Docs
+GET    /docs                       # Swagger UI
 ```
 
 ## 🛠️ Cấu hình môi trường
@@ -125,58 +112,73 @@ Tạo file `.env` từ template:
 
 ```bash
 # Database Configuration
-POSTGRES_DB=invoice_db
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres123
+DATABASE_URL=postgresql://user:password@host:port/database
+# Or for SQLite (development): DATABASE_URL=sqlite:///./chatbot.db
 
-# Flask Configuration
-FLASK_ENV=development
-SECRET_KEY=your-secret-key-here
-JWT_SECRET_KEY=your-jwt-secret-key-here
+# Security
+JWT_SECRET_KEY=your-super-secret-key-change-this-in-production
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_HOURS=24
 
 # AI Configuration
-OPENAI_API_KEY=your-openai-api-key-here
+GROQ_API_KEY=your_groq_api_key_here
+GOOGLE_AI_API_KEY=your_google_ai_key_here
+
+# Application
+DEBUG=True
+ENVIRONMENT=development
+PORT=8000
 
 # CORS Origins
-CORS_ORIGINS=http://localhost:3000,http://localhost:5174
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 ```
 
 ## 📁 Cấu trúc dự án
 
 ```
-DoAnCN/
-├── 📁 backend/              # Flask API Server
-│   ├── app.py              # Main application
-│   ├── config.py           # Configuration
-│   ├── models/             # Database models
-│   ├── routes/             # API routes
-│   ├── services/           # Business logic
-│   └── utils/              # Utilities
-├── 📁 chatbot/              # AI Chatbot Service
-│   ├── app.py              # Chatbot server
-│   ├── handlers/           # Chat handlers
-│   └── models/             # AI models
+ChatBotAI/
+├── 📁 backend/              # FastAPI Backend
+│   ├── main_refactored.py   # Main FastAPI application
+│   ├── main.py              # Alternative main file
+│   ├── config/              # Configuration modules
+│   ├── models/              # SQLAlchemy models
+│   ├── schemas/             # Pydantic schemas
+│   ├── routers/             # API route handlers
+│   ├── services/            # Business logic services
+│   ├── core/                # Core utilities
+│   ├── utils/               # Helper utilities
+│   ├── requirements.txt     # Python dependencies
+│   └── Dockerfile           # Docker configuration
 ├── 📁 frontend/             # React Frontend
-│   ├── app/                # React components
-│   ├── components/         # UI components
-│   └── routes/             # Page routes
-├── 📁 docker/               # Docker configurations
-├── docker-compose.yml      # Docker orchestration
-├── main.py                 # Python launcher
-├── main.ps1                # PowerShell launcher
-└── API_DOCUMENTATION.md    # API documentation
+│   ├── src/                 # Source code
+│   │   ├── components/      # React components
+│   │   ├── pages/           # Page components
+│   │   ├── services/        # API services
+│   │   └── types/           # TypeScript types
+│   ├── package.json         # Node dependencies
+│   ├── vite.config.ts       # Vite configuration
+│   └── Dockerfile           # Docker configuration
+├── 📁 docs/                 # Documentation
+│   ├── README.md            # Documentation index
+│   ├── *.md                 # Various guides and reports
+├── 📁 scripts/              # Utility scripts
+├── docker-compose.yml       # Docker orchestration
+├── .env.example             # Environment variables template
+└── README.md                # This file
 ```
 
 ## 🧪 Testing
 
 ```bash
-# Test all services
-python main.py test
+# Health checks
+curl http://localhost:8000/health
+curl http://localhost:8000/
 
-# Manual testing
-curl http://localhost:5000/api/health
-curl http://localhost:5001/health
-curl http://localhost:5174
+# API Documentation
+open http://localhost:8000/docs
+
+# Frontend
+open http://localhost:3000
 ```
 
 ## 🔧 Development
@@ -185,12 +187,15 @@ curl http://localhost:5174
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-venv\Scripts\activate     # Windows
+# Activate virtual environment (if using venv)
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+
+# Install dependencies
 pip install -r requirements.txt
-python app.py
+
+# Run backend
+python main_refactored.py
 ```
 
 ### Frontend Development
@@ -198,6 +203,8 @@ python app.py
 ```bash
 cd frontend
 npm install
+npm run dev
+```
 npm run dev
 ```
 

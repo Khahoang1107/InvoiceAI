@@ -1,9 +1,9 @@
 # API Router: Authentication
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from ..schemas.models import UserCreate, UserResponse, TokenResponse, LoginRequest
-from ..services.user_service import UserService
-from ..core.logging import logger
+from schemas.models import UserCreate, UserResponse, TokenResponse, LoginRequest
+from services.user_service import UserService
+from core.logging import logger
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
