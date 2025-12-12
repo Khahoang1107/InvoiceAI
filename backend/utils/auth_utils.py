@@ -5,11 +5,12 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from config.settings import settings
 
 # JWT Configuration
-SECRET_KEY = "your-secret-key-here-change-in-production"  # Should be in environment variables
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+SECRET_KEY = settings.SECRET_KEY
+ALGORITHM = settings.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Password hashing - Thay thế bcrypt bằng Argon2 để hỗ trợ password dài hơn
 from argon2 import PasswordHasher

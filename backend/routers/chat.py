@@ -1,13 +1,35 @@
-# API Router: Chat Messaging with Groq AI
-
 from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Optional
 from pydantic import BaseModel
 import logging
 import os
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from routers.auth import get_current_user as get_current_user_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["chat"])
+router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# Security scheme for extracting token from Authorization header
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Dependency to get current authenticated user from JWT token in Authorization header"""
+    try:
+        # Extract token from Authorization header
+        token = credentials.credentials
+        # Get user service and verify token
+        from services.user_service import UserService
+        user_service = UserService()
+        user_id = user_service.verify_token(token)
+        user = await user_service.get_user_by_id(user_id)
+        return user
+    except Exception as e:
+        logger.error(f"Authentication failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 class ChatMessage(BaseModel):
     message: str
@@ -47,8 +69,8 @@ def get_chat_handler():
     
     return _chat_handler
 
-@router.post("/chat")
-async def chat(request: ChatMessage):
+@router.post("/")
+async def chat(request: ChatMessage, current_user: dict = Depends(get_current_user)):
     """
     Chat endpoint - Process message through Groq AI
     
@@ -59,7 +81,7 @@ async def chat(request: ChatMessage):
     - Invoice management commands
     """
     try:
-        logger.info(f"Chat message: {request.message[:50]}...")
+        logger.info(f"Chat message from user {current_user.id}: {request.message[:50]}...")
         
         # Get or initialize chat handler
         chat_handler = get_chat_handler()

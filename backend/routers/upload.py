@@ -1,12 +1,33 @@
-# API Router: File Upload and OCR
-
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status
 from pathlib import Path
-from schemas.models import FileUploadResponse, OCRResult
+from schemas.models import FileUploadResponse, OCRResult, InvoiceResponse
 from services.file_upload_service import FileUploadService
 from core.logging import logger
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 router = APIRouter(prefix="/api/upload", tags=["file-upload"])
+
+# Security scheme for extracting token from Authorization header
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Dependency to get current authenticated user from JWT token in Authorization header"""
+    try:
+        # Extract token from Authorization header
+        token = credentials.credentials
+        # Get user service and verify token
+        from services.user_service import UserService
+        user_service = UserService()
+        user_id = user_service.verify_token(token)
+        user = await user_service.get_user_by_id(user_id)
+        return user
+    except Exception as e:
+        logger.error(f"Authentication failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def get_upload_service() -> FileUploadService:
@@ -14,42 +35,40 @@ async def get_upload_service() -> FileUploadService:
     return FileUploadService()
 
 
-@router.post("/file", response_model=FileUploadResponse)
+@router.post("/", response_model=dict)
 async def upload_file(
     file: UploadFile = File(...),
-    user_id: int = None,
+    current_user = Depends(get_current_user),
     upload_service: FileUploadService = Depends(get_upload_service)
 ):
     """
-    Upload file for processing
+    Upload file and process OCR immediately
     
     Args:
         file: File to upload
-        user_id: ID of user uploading file
+        current_user: Current authenticated user
         
     Returns:
-        FileUploadResponse with file metadata and ID
+        InvoiceResponse with extracted invoice data
     """
     try:
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="user_id is required"
-            )
+        user_id = current_user.id
         
-        logger.info(f"File upload started by user {user_id}: {file.filename}")
+        logger.info(f"File upload and OCR processing started by user {user_id}: {file.filename}")
         
         # Create temporary file path
-        temp_file = Path(f"/tmp/{file.filename}")
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_file = Path(temp_dir) / file.filename
         with open(temp_file, "wb") as f:
             content = await file.read()
             f.write(content)
         
-        # Upload and validate
-        response = await upload_service.upload_file(user_id, temp_file, file.filename)
+        # Upload file and process OCR immediately
+        invoice_data = await upload_service.upload_and_process_ocr(user_id, temp_file, file.filename)
         
-        logger.info(f"File uploaded successfully: {file.filename} (ID: {response.file_id})")
-        return response
+        logger.info(f"File uploaded and OCR processed successfully: {file.filename}")
+        return {"invoice": invoice_data}
         
     except Exception as e:
         logger.error(f"File upload failed for user {user_id}: {str(e)}")
@@ -62,7 +81,7 @@ async def upload_file(
 @router.post("/ocr/{file_id}", response_model=OCRResult)
 async def process_ocr(
     file_id: str,
-    user_id: int,
+    current_user = Depends(get_current_user),
     upload_service: FileUploadService = Depends(get_upload_service)
 ):
     """
@@ -70,12 +89,13 @@ async def process_ocr(
     
     Args:
         file_id: ID of uploaded file
-        user_id: ID of user (verify ownership)
+        current_user: Current authenticated user
         
     Returns:
         OCRResult with extracted text and confidence
     """
     try:
+        user_id = current_user.id
         logger.info(f"OCR processing started for file {file_id}")
         
         result = await upload_service.process_ocr(file_id, user_id)
@@ -94,7 +114,7 @@ async def process_ocr(
 @router.get("/ocr/{file_id}", response_model=OCRResult)
 async def get_ocr_result(
     file_id: str,
-    user_id: int,
+    current_user = Depends(get_current_user),
     upload_service: FileUploadService = Depends(get_upload_service)
 ):
     """
@@ -102,12 +122,13 @@ async def get_ocr_result(
     
     Args:
         file_id: ID of uploaded file
-        user_id: ID of user
+        current_user: Current authenticated user
         
     Returns:
         OCRResult with extracted text
     """
     try:
+        user_id = current_user.id
         logger.info(f"Retrieving OCR result for file {file_id}")
         
         result = await upload_service.get_ocr_result(file_id, user_id)

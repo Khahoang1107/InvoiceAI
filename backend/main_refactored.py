@@ -21,9 +21,14 @@ from datetime import datetime
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 # Core imports
 from config.settings import settings
@@ -36,7 +41,7 @@ from middleware.logging import LoggingMiddleware
 from middleware.errors import api_exception_handler, general_exception_handler
 
 # Router imports
-from routers import auth, chat, upload
+from routers import auth, chat, upload, images, export, invoices
 
 # Legacy imports (backward compatibility)
 try:
@@ -132,6 +137,26 @@ logger.info("✅ Middleware configured")
 app.add_exception_handler(APIException, api_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
+# Add validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """Handle validation errors with detailed messages"""
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(x) for x in error["loc"][1:])
+        message = error["msg"]
+        errors.append(f"{field}: {message}")
+    
+    logger.error(f"Validation error: {'; '.join(errors)}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": errors,
+            "error_type": "validation_error"
+        }
+    )
+
 logger.info("✅ Exception handlers registered")
 
 
@@ -189,6 +214,9 @@ logger.info("Registering API routers...")
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(upload.router)
+app.include_router(images.router)
+app.include_router(export.router)
+app.include_router(invoices.router)
 
 logger.info("✅ API routers registered")
 
@@ -223,7 +251,7 @@ if __name__ == "__main__":
     logger.info(f"Starting server on http://0.0.0.0:{settings.PORT}")
     
     uvicorn.run(
-        "main:app",
+        "main_refactored:app",
         host="0.0.0.0",
         port=settings.PORT,
         reload=settings.DEBUG,

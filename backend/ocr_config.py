@@ -23,6 +23,22 @@ def configure_tesseract():
                 return True
         except:
             pass
+
+        # Try common installation paths
+        common_paths = [
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Tesseract-OCR\tesseract.exe',
+            os.path.join(os.environ.get('PROGRAMFILES', ''), 'Tesseract-OCR', 'tesseract.exe'),
+            os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 'Tesseract-OCR', 'tesseract.exe'),
+        ]
+
+        for path in common_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                print(f"✅ Found Tesseract at: {path}")
+                return True
+
         return False
 
 def get_tesseract_version():
@@ -38,3 +54,7 @@ if not configure_tesseract():
     print("⚠️ Warning: Tesseract not found. OCR features may not work properly.")
     print("Please install Tesseract from: https://github.com/tesseract-ocr/tesseract")
     print("Or ensure it's in your PATH environment variable.")
+    print("Common installation paths checked:")
+    print("  - C:\\Program Files\\Tesseract-OCR\\tesseract.exe")
+    print("  - C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe")
+    print("  - C:\\Tesseract-OCR\\tesseract.exe")

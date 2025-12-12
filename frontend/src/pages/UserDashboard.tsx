@@ -81,7 +81,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
     
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/chat', {
+      const response = await fetch('/api/chat/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -317,7 +317,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       }
       
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/upload', {
+      const response = await fetch('/api/upload/', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -488,7 +488,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       try {
         // Call real chat API
         const token = localStorage.getItem('token');
-        const response = await fetch('/api/chat', {
+        const response = await fetch('/api/chat/', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

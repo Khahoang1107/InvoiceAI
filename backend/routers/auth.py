@@ -1,7 +1,7 @@
 # API Router: Authentication
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from schemas.models import UserCreate, UserResponse, TokenResponse
+from schemas.models import UserCreate, UserResponse, TokenResponse, LoginRequest
 from services.user_service import UserService
 from core.logging import logger
 
@@ -26,27 +26,33 @@ async def register(user_data: UserCreate, user_service: UserService = Depends(ge
     """
     try:
         logger.info(f"User registration attempt: {user_data.email}")
+        logger.info(f"Registration data: email={user_data.email}, name={user_data.name}, password_length={len(user_data.password)}")
         user = await user_service.create_user(user_data)
         logger.info(f"User registered successfully: {user_data.email}")
         return user
+    except ValueError as e:
+        logger.error(f"Validation failed for {user_data.email}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Registration failed for {user_data.email}: {str(e)}")
+        logger.error(f"Registration failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(email: str, password: str, user_service: UserService = Depends(get_user_service)):
+@router.post("/login")
+async def login(credentials: LoginRequest, user_service: UserService = Depends(get_user_service)):
     """
     Authenticate user and return JWT token
     
     Args:
-        email: User email
-        password: User password
+        credentials: Login credentials (email and password)
         
     Returns:
         JWT access token
     """
     try:
+        email = credentials.email
+        password = credentials.password
+        
         logger.info(f"Login attempt: {email}")
         user = await user_service.authenticate_user(email, password)
         
@@ -61,12 +67,15 @@ async def login(email: str, password: str, user_service: UserService = Depends(g
         access_token = user_service.create_access_token(user.id)
         
         logger.info(f"User logged in successfully: {email}")
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=1800  # 30 minutes
-        )
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": 1800,  # 30 minutes
+            "user": user
+        }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Login failed for {email}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))

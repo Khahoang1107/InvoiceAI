@@ -82,6 +82,22 @@ class DatabaseToolsPostgres:
                     )
                 """))
 
+                # Create images table for storing image files
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS images (
+                        id SERIAL PRIMARY KEY,
+                        filename VARCHAR(255) NOT NULL,
+                        original_filename VARCHAR(255),
+                        file_data BYTEA NOT NULL,
+                        file_size INTEGER,
+                        mime_type VARCHAR(100),
+                        user_id INTEGER REFERENCES users(id),
+                        invoice_id INTEGER REFERENCES invoices(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+
                 conn.commit()
                 logger.info("✅ PostgreSQL tables initialized successfully")
                 return True
@@ -142,6 +158,89 @@ class DatabaseToolsPostgres:
         except Exception as e:
             logger.error(f"❌ Failed to save invoice: {e}")
             return None
+
+    def save_image(self, filename: str, original_filename: str, file_data: bytes, 
+                   file_size: int, mime_type: str, user_id: int = None, 
+                   invoice_id: int = None) -> Optional[int]:
+        """Save image file to database"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("""
+                    INSERT INTO images (filename, original_filename, file_data, file_size, 
+                                      mime_type, user_id, invoice_id, created_at, updated_at)
+                    VALUES (:filename, :original_filename, :file_data, :file_size, 
+                           :mime_type, :user_id, :invoice_id, NOW(), NOW())
+                    RETURNING id
+                """), {
+                    "filename": filename,
+                    "original_filename": original_filename,
+                    "file_data": file_data,
+                    "file_size": file_size,
+                    "mime_type": mime_type,
+                    "user_id": user_id,
+                    "invoice_id": invoice_id
+                })
+
+                image_id = result.fetchone()[0]
+                conn.commit()
+
+                logger.info(f"✅ Image saved with ID: {image_id}")
+                return image_id
+
+        except Exception as e:
+            logger.error(f"❌ Failed to save image: {e}")
+            return None
+
+    def get_image(self, image_id: int) -> Optional[Dict]:
+        """Get image from database by ID"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT id, filename, original_filename, file_data, file_size, 
+                           mime_type, user_id, invoice_id, created_at, updated_at
+                    FROM images WHERE id = :image_id
+                """), {"image_id": image_id})
+
+                row = result.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'filename': row[1],
+                        'original_filename': row[2],
+                        'file_data': row[3],
+                        'file_size': row[4],
+                        'mime_type': row[5],
+                        'user_id': row[6],
+                        'invoice_id': row[7],
+                        'created_at': str(row[8]),
+                        'updated_at': str(row[9])
+                    }
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Error getting image: {e}")
+            return None
+
+    def update_image_invoice_id(self, image_id: int, invoice_id: int) -> bool:
+        """Update image record with invoice_id reference"""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("""
+                    UPDATE images 
+                    SET invoice_id = :invoice_id, updated_at = NOW()
+                    WHERE id = :image_id
+                """), {
+                    "image_id": image_id,
+                    "invoice_id": invoice_id
+                })
+                
+                conn.commit()
+                logger.info(f"✅ Updated image {image_id} with invoice_id {invoice_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"❌ Failed to update image invoice_id: {e}")
+            return False
 
     def get_all_invoices(self, limit: int = 20) -> List[Dict]:
         """Get all invoices from database"""
