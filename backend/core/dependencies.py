@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from core.logging import logger
+from .logging import logger
 
 try:
-    from config.settings import settings
+    from ..config.settings import settings
 except ImportError:
     # Fallback if import fails
     class DummySettings:

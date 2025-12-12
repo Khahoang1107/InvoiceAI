@@ -4,15 +4,15 @@ from typing import Optional, Tuple
 from pathlib import Path
 from datetime import datetime
 import mimetypes
-from core.exceptions import (
+from ..core.exceptions import (
     ValidationException,
     ExternalServiceException,
     DatabaseException
 )
-from core.dependencies import container
-from schemas.models import FileUploadResponse, OCRResult, InvoiceResponse
-from core.logging import logger
-from utils.database_tools_postgres import get_database_tools
+from ..core.dependencies import container
+from ..schemas.models import FileUploadResponse, OCRResult, InvoiceResponse
+from ..core.logging import logger
+from ..utils.database_tools_postgres import get_database_tools
 
 
 class FileUploadService:

@@ -4,8 +4,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from utils.database_tools_postgres import get_database_tools
-from core.logging import logger
+from ..utils.database_tools_postgres import get_database_tools
+from ..core.logging import logger
 import io
 
 router = APIRouter(prefix="/api", tags=["images"])
@@ -19,7 +19,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         # Extract token from Authorization header
         token = credentials.credentials
         # Get user service and verify token
-        from services.user_service import UserService
+        from ..services.user_service import UserService
         user_service = UserService()
         user_data = user_service.verify_token(token)
         return user_data
