@@ -29,16 +29,17 @@ class UserService:
             if existing:
                 raise ValidationException(f"User {user_data.email} already exists")
             
-            # Hash password (using bcrypt in production)
-            from passlib.context import CryptContext
-            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-            hashed_password = pwd_context.hash(user_data.password)
+            # Hash password using bcrypt directly
+            import bcrypt
+            # Truncate password to 72 bytes (bcrypt limitation)
+            password_bytes = user_data.password.encode('utf-8')[:72]
+            hashed_password = bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode('utf-8')
             
             user = User(
                 email=user_data.email,
                 name=user_data.name,
                 hashed_password=hashed_password,
-                is_active=True,
+                is_active=1,
                 created_at=datetime.utcnow()
             )
             self.db.add(user)
@@ -60,14 +61,17 @@ class UserService:
     async def authenticate_user(self, email: str, password: str) -> Optional[UserResponse]:
         """Authenticate user by email and password"""
         try:
-            from passlib.context import CryptContext
-            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            import bcrypt
             
             user = self.db.query(User).filter(User.email == email).first()
             if not user:
                 raise AuthenticationException("Invalid email or password")
             
-            if not pwd_context.verify(password, user.hashed_password):
+            # Truncate password to 72 bytes (bcrypt limitation)
+            password_bytes = password.encode('utf-8')[:72]
+            
+            # Verify password with bcrypt
+            if not bcrypt.checkpw(password_bytes, user.hashed_password.encode('utf-8')):
                 raise AuthenticationException("Invalid email or password")
             
             if not user.is_active:

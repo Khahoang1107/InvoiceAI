@@ -57,11 +57,19 @@ class APIService {
    * Register new user
    */
   async register(data: { email: string; password: string; name?: string }): Promise<{ user: User; token: string }> {
-    const response = await this.request<{ access_token: string; token_type: string; user: User }>(
-      '/api/auth/register',
+    // Truncate password to 72 characters (bcrypt limitation)
+    const truncatedPassword = data.password.substring(0, 72);
+    const registerData = {
+      email: data.email,
+      name: data.name || '',
+      password: truncatedPassword
+    };
+    
+    const response = await this.request<{ access_token: string; token_type: string; user: User }>
+      ('/api/auth/register',
       {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: JSON.stringify(registerData),
       }
     );
     
@@ -78,11 +86,18 @@ class APIService {
    * Login user
    */
   async login(credentials: LoginCredentials): Promise<{ user: User; token: string }> {
+    // Truncate password to 72 characters (bcrypt limitation)
+    const truncatedPassword = credentials.password.substring(0, 72);
+    const loginData = {
+      email: credentials.email,
+      password: truncatedPassword
+    };
+    
     const response = await this.request<{ access_token: string; token_type: string; user: User }>(
       '/api/auth/login',
       {
         method: 'POST',
-        body: JSON.stringify(credentials),
+        body: JSON.stringify(loginData),
       }
     );
 
@@ -227,7 +242,7 @@ class APIService {
   async sendChatMessage(message: string): Promise<{ response: string }> {
     const token = localStorage.getItem('token');
     
-    return await this.request('/api/chat', {
+    return await this.request('/api/chat/', {
       method: 'POST',
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),

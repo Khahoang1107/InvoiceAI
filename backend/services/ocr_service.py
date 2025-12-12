@@ -24,13 +24,14 @@ class OCRService:
         """
         Extract invoice fields from OCR text with enhanced dash amount recognition
         """
-        # Initialize training client for dash pattern learning
-        training_client = None
-        try:
-            from utils.training_client import TrainingDataClient
-            training_client = TrainingDataClient()
-        except Exception as e:
-            logger.warning(f"Could not initialize training client: {e}")
+        # Log the OCR text being processed
+        logger.info(f"🔍 Processing OCR text for {filename}: '{ocr_text[:300]}...' (length: {len(ocr_text)})")
+        
+        # Check if OCR failed and provide fallback data
+        if "OCR not available" in ocr_text or "OCR failed" in ocr_text or len(ocr_text.strip()) < 10:
+            logger.warning(f"⚠️ OCR extraction failed for {filename}, using fallback invoice data")
+            return self._get_fallback_invoice_data(filename)
+
 
         data = {
             'invoice_code': 'INV-UNKNOWN',
@@ -926,3 +927,48 @@ class OCRService:
         except Exception as db_err:
             logger.error(f"❌ Database error: {db_err}")
             return None
+
+    def _get_fallback_invoice_data(self, filename: str) -> dict:
+        """
+        Generate fallback invoice data when OCR fails
+        """
+        from datetime import datetime
+        import re
+
+        # Extract some info from filename if possible
+        invoice_code = "INV-UNKNOWN"
+        if "invoice" in filename.lower() or "bill" in filename.lower():
+            # Try to extract numbers from filename
+            numbers = re.findall(r'\d+', filename)
+            if numbers:
+                invoice_code = f"INV-{numbers[0]}"
+
+        # Generate realistic-looking fallback data
+        fallback_data = {
+            'invoice_code': invoice_code,
+            'date': datetime.now().strftime("%d/%m/%Y"),
+            'buyer_name': 'Unknown Customer',
+            'seller_name': 'Unknown Vendor',
+            'total_amount': '0 VND',
+            'total_amount_value': 0,
+            'subtotal': 0,
+            'tax_amount': 0,
+            'tax_percentage': 0,
+            'currency': 'VND',
+            'buyer_tax_id': '',
+            'seller_tax_id': '',
+            'buyer_address': '',
+            'seller_address': '',
+            'items': [],
+            'transaction_id': '',
+            'payment_method': '',
+            'payment_account': '',
+            'invoice_time': None,
+            'due_date': None,
+            'invoice_type': 'general',
+            'confidence': 0.1,  # Low confidence to indicate OCR failed
+            'ocr_text': f'OCR processing failed for {filename}. Please install Tesseract OCR to enable text extraction.'
+        }
+
+        logger.info(f"📄 Generated fallback invoice data for {filename}")
+        return fallback_data

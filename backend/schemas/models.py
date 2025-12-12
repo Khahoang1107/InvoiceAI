@@ -15,11 +15,17 @@ class UserCreate(UserBase):
     
     @validator('password')
     def password_strength(cls, v):
+        # Password must contain uppercase letter and digit
         if not any(c.isupper() for c in v):
-            raise ValueError('Password must contain uppercase letter')
+            raise ValueError('Password must contain at least one uppercase letter (A-Z)')
         if not any(c.isdigit() for c in v):
-            raise ValueError('Password must contain digit')
+            raise ValueError('Password must contain at least one digit (0-9)')
         return v
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1)
 
 
 class UserResponse(UserBase):
@@ -29,6 +35,10 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
+        
+    @validator('is_active', pre=True)
+    def convert_is_active(cls, v):
+        return bool(v)
 
 
 class TokenResponse(BaseModel):
@@ -92,10 +102,26 @@ class InvoiceCreate(InvoiceBase):
     pass
 
 
-class InvoiceResponse(InvoiceBase):
-    id: int
-    user_id: int
-    created_at: datetime
+class InvoiceResponse(BaseModel):
+    confidence: float
+    invoice_type: str
+    invoice_code: str
+    date: str
+    seller_name: str
+    buyer_name: str
+    seller_address: Optional[str] = None
+    buyer_address: Optional[str] = None
+    seller_tax_id: Optional[str] = None
+    buyer_tax_id: Optional[str] = None
+    subtotal: float = 0
+    tax_amount: float = 0
+    tax_percentage: float = 0
+    currency: str = "VND"
+    total_amount: Optional[str] = None
+    total_amount_value: float = 0
+    transaction_id: Optional[str] = None
+    payment_method: Optional[str] = None
+    ocr_text: Optional[str] = None
     
     class Config:
         from_attributes = True
