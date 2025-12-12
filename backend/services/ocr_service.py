@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from PIL import Image
 
-from utils.logger import get_logger
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -250,7 +250,9 @@ class OCRService:
                 break
 
         # Check for free transaction (Miễn phí)
-        if 'mién phí' in ocr_text.lower() or 'mien phi' in ocr_text.lower():
+        logger.info(f"Checking for free transaction: 'mién phi' in text: {'mién phi' in ocr_text.lower()}")
+        if ('mién phí' in ocr_text.lower() or 'mien phi' in ocr_text.lower() or 'miễn phí' in ocr_text.lower() or 
+            'mién phi' in ocr_text.lower() or 'mien phí' in ocr_text.lower()):
             data['total_amount'] = '0 VND'
             data['total_amount_value'] = 0
             data['subtotal'] = 0

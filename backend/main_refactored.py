@@ -49,7 +49,7 @@ from middleware.logging import LoggingMiddleware
 from middleware.errors import api_exception_handler, general_exception_handler
 
 # Router imports
-from routers import auth, chat, upload, images, export, invoices
+from .routers import auth, chat, upload, images, export, invoices
 
 # Legacy imports (backward compatibility)
 try:

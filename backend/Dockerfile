@@ -33,4 +33,4 @@ RUN mkdir -p uploads logs
 EXPOSE $PORT
 
 # Run application (use $PORT from Render)
-CMD uvicorn main_refactored:app --host 0.0.0.0 --port $PORT
+CMD uvicorn backend.main_refactored:app --host 0.0.0.0 --port $PORT

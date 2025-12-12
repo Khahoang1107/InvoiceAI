@@ -10,8 +10,8 @@ from core.exceptions import (
     DatabaseException
 )
 from core.dependencies import container
-from schemas.models import UserCreate, UserResponse
-from models.user import User
+from ..schemas.models import UserCreate, UserResponse
+from ..models.user import User
 
 
 class UserService:
