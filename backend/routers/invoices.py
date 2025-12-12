@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from typing import Optional, List
 from datetime import datetime
-from ..utils.database_tools_postgres import get_database_tools
-from ..core.logging import logger
+from utils.database_tools_postgres import get_database_tools
+from core.logging import logger
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 

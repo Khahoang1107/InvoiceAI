@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from PIL import Image
 
-from ..utils.logger import get_logger
+from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -249,6 +249,13 @@ class OCRService:
                 })
                 break
 
+        # Check for free transaction (Miễn phí)
+        if 'mién phí' in ocr_text.lower() or 'mien phi' in ocr_text.lower():
+            data['total_amount'] = '0 VND'
+            data['total_amount_value'] = 0
+            data['subtotal'] = 0
+            logger.info("✅ Detected free electricity bill payment (Miễn phí)")
+
         # Extract amount with dash priority
         data = self._extract_amount_with_dash_priority(data, ocr_text, is_electricity=True)
 
@@ -414,10 +421,12 @@ class OCRService:
                 
                 # HIGH PRIORITY: Currency marker without dash
                 r'([0-9]{1,3}(?:[,\.][0-9]{3})+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
+                r'([0-9]+(?:[,\.][0-9]+)+)\s*(?:d|đ|vnd|vnđ|đồng|VND)',
                 
                 # MEDIUM PRIORITY: Labeled amounts
                 r'(?:số tiền|amount|total|tổng tiền|tổng cộng)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?',
                 r'(?:thành tiền|tổng|total)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ))?',
+                r'(?:tiền thanh toán|số tiền phải trả|phải trả)[:\s]*([0-9,\.]+)(?:\s*(?:vnd|đ|vnđ|đồng))?',
                 
                 # LOW PRIORITY: Dash/parentheses without currency (commented to prevent year matches)
                 # r'-\s*([0-9,\.]+)',
@@ -434,6 +443,7 @@ class OCRService:
             if match:
                 amount_str = match.group(1).strip()
                 amount_str = amount_str.replace(' ', '').replace('_', '')
+                logger.info(f"🔍 Matched pattern '{pattern}' with amount_str: '{amount_str}'")
 
                 is_negative = False
                 if is_electricity and (match.group(0).startswith('-') or match.group(0).startswith('(') or '-308.472d' in ocr_text or '@) -' in ocr_text):
@@ -499,7 +509,9 @@ class OCRService:
 
         # Validate amounts
         total_amount_value = data.get('total_amount_value', 0)
-        if total_amount_value > 0:
+        if total_amount_value == 0:
+            logger.warning(f"⚠️ No amount extracted from OCR text. Invoice type: {data.get('invoice_type')}. OCR text sample: '{ocr_text[:500]}'")
+        elif total_amount_value > 0:
             if data.get('invoice_type') == 'electricity' and total_amount_value > 5000000:
                 data['total_amount_value'] = total_amount_value / 100
                 data['total_amount'] = f"{data['total_amount_value']:,.0f} VND"
