@@ -2,7 +2,7 @@
 FROM python:3.10-slim
 
 # Set working directory
-WORKDIR /app
+WORKDIR /app/backend
 
 # Set Python path to include /app
 ENV PYTHONPATH=/app:$PYTHONPATH
@@ -33,4 +33,4 @@ RUN mkdir -p uploads logs
 EXPOSE $PORT
 
 # Run application (use $PORT from Render)
-CMD uvicorn backend.main_refactored:app --host 0.0.0.0 --port $PORT
+CMD uvicorn main_refactored:app --host 0.0.0.0 --port $PORT
