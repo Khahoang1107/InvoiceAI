@@ -30,7 +30,7 @@ COPY backend/ .
 RUN mkdir -p uploads logs
 
 # Expose port
-EXPOSE 8000
+EXPOSE $PORT
 
-# Run application (use $PORT from Railway)
-CMD uvicorn main_refactored:app --host 0.0.0.0 --port ${PORT:-8000}
+# Run application (use $PORT from Render)
+CMD uvicorn main_refactored:app --host 0.0.0.0 --port $PORT

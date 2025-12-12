@@ -13,13 +13,20 @@ Run: uvicorn main:app --reload --port 8000
 Or:  python main.py
 """
 
+# Add current directory to path for imports
 import sys
+import os
 from pathlib import Path
-from contextlib import asynccontextmanager
-from datetime import datetime
 
-# Add backend to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Ensure the current directory is in Python path
+current_dir = Path(__file__).parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
+# Also add the parent directory if running from backend/ subdirectory
+parent_dir = current_dir.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
 
 # Load environment variables
 from dotenv import load_dotenv
