@@ -230,20 +230,6 @@ if admin_api_router:
     logger.info("✅ Legacy admin_api router registered")
 
 
-# Startup event (alternative to lifespan)
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler"""
-    logger.info("Startup event triggered")
-
-
-# Shutdown event (alternative to lifespan)
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler"""
-    logger.info("Shutdown event triggered")
-
-
 # Run application
 if __name__ == "__main__":
     import uvicorn
