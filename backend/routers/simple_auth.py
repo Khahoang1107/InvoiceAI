@@ -65,9 +65,9 @@ async def register(user_data: UserRegister):
     database_url = os.getenv('DATABASE_URL', '')
     
     if database_url and not database_url.startswith('sqlite'):
-        from utils.database_tools_postgres import get_database_tools
+        from ..utils.database_tools_postgres import get_database_tools
     else:
-        from utils.database_tools_sqlite import get_database_tools
+        from ..utils.database_tools_sqlite import get_database_tools
     
     db_tools = get_database_tools()
     
@@ -132,9 +132,9 @@ async def login(credentials: UserLogin):
     database_url = os.getenv('DATABASE_URL', '')
     
     if database_url and not database_url.startswith('sqlite'):
-        from utils.database_tools_postgres import get_database_tools
+        from ..utils.database_tools_postgres import get_database_tools
     else:
-        from utils.database_tools_sqlite import get_database_tools
+        from ..utils.database_tools_sqlite import get_database_tools
     
     db_tools = get_database_tools()
     
