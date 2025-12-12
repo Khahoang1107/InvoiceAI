@@ -6,8 +6,8 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
-from ..utils.database_tools_postgres import get_database_tools
-from ..core.logging import logger
+from utils.database_tools_postgres import get_database_tools
+from core.logging import logger
 import io
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -18,7 +18,7 @@ def get_db():
 
 def get_export_service():
     db = get_db()
-    from ..export_service import ExportService
+    from export_service import ExportService
     return ExportService(db)
 
 db = None

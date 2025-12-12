@@ -2,7 +2,7 @@
 FROM python:3.10-slim
 
 # Set working directory
-WORKDIR /app/backend
+WORKDIR /app
 
 # Set Python path to include /app
 ENV PYTHONPATH=/app:$PYTHONPATH

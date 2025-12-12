@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .logging import logger
 
 try:
-    from ..config.settings import settings
+    from config.settings import settings
 except ImportError:
     # Fallback if import fails
     class DummySettings:
