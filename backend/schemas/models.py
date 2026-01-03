@@ -32,6 +32,8 @@ class UserResponse(UserBase):
     id: int
     created_at: datetime
     is_active: bool
+    is_admin: bool = False  # Add is_admin field
+    role: Optional[str] = None  # Add role field
     
     class Config:
         from_attributes = True

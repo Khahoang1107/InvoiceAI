@@ -10,6 +10,17 @@ from datetime import datetime
 import time
 import os
 
+# PostgreSQL imports
+try:
+    import psycopg2
+    from psycopg2 import pool
+    from psycopg2.extras import RealDictCursor
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
+    pool = None
+    RealDictCursor = None
+
 logger = logging.getLogger(__name__)
 
 class DatabaseTools:
@@ -33,6 +44,11 @@ class DatabaseTools:
     
     def _init_connection_pool(self):
         """Initialize PostgreSQL connection pool"""
+        if not PSYCOPG2_AVAILABLE or pool is None:
+            logger.warning("⚠️ psycopg2 not available, connection pool not initialized")
+            self.connection_pool = None
+            return
+            
         try:
             self.connection_pool = pool.SimpleConnectionPool(
                 minconn=1,

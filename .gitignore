@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+venv312/
 ENV/
 .venv
 *.egg-info/
@@ -57,6 +58,9 @@ build/
 
 # Rasa models
 models/
+
+# KEEP NER model - important for OCR
+!backend/models/invoice_ner/
 
 # Azure credentials
 azure_credentials.json

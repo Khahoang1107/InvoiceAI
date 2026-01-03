@@ -25,6 +25,7 @@ interface Invoice {
   status: string;
   processed_at: string;
   file_path?: string;
+  image_id?: number;
 }
 
 interface InvoiceManagementProps {
@@ -33,6 +34,7 @@ interface InvoiceManagementProps {
 
 const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [totalInvoices, setTotalInvoices] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
@@ -46,17 +48,19 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
   const fetchInvoices = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/invoices', {
+      const response = await fetch('/api/invoices/', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (response.ok) {
         const result = await response.json();
-        // Backend returns { success, message, data: [...], count }
-        setInvoices(result.data || result.invoices || []);
+        // Backend returns { invoices: [...], total, count, limit, offset, has_more }
+        setInvoices(result.invoices || []);
+        setTotalInvoices(result.total || 0);
       } else {
         console.error('Failed to fetch invoices:', response.status);
         setInvoices([]);
+        setTotalInvoices(0);
       }
     } catch (error) {
       console.error('Error fetching invoices:', error);
@@ -155,8 +159,8 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
     });
 
     const csvContent = [
-      '\uFEFF' + headers.join(','), // BOM for UTF-8
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      '\uFEFF' + headers.join(';'), // BOM for UTF-8, semicolon for Excel
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(';'))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -248,7 +252,7 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
 
           <div className="flex items-center justify-between text-sm text-gray-600">
             <div>
-              Hiển thị <strong>{filteredInvoices.length}</strong> / {invoices.length} hóa đơn
+              Hiển thị <strong>{filteredInvoices.length}</strong> / <strong>{totalInvoices}</strong> hóa đơn
               {selectedInvoices.length > 0 && (
                 <span className="ml-2">
                   • Đã chọn: <strong>{selectedInvoices.length}</strong>
@@ -347,9 +351,9 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{invoice.processed_at}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {invoice.file_path ? (
+                        {invoice.image_id ? (
                           <button
-                            onClick={() => setViewingImage(invoice.file_path!)}
+                            onClick={() => setViewingImage(invoice.image_id!.toString())}
                             className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                             title="Xem ảnh hóa đơn"
                           >
@@ -412,7 +416,7 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
             </button>
             <div className="p-4">
               <img
-                src={viewingImage?.startsWith('uploads/') ? `/${viewingImage}` : `/uploads/${viewingImage}`}
+                src={`http://localhost:8000/api/images/${viewingImage}`}
                 alt="Invoice"
                 className="max-w-full max-h-[80vh] object-contain mx-auto"
                 onError={(e) => {

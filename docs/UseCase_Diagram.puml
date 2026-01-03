@@ -1,0 +1,148 @@
+@startuml InvoiceAI_UseCase_Diagram
+
+' Styling
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam usecase {
+    BackgroundColor LightBlue
+    BorderColor DarkBlue
+    ArrowColor DarkBlue
+}
+
+title Use Case Diagram - Hệ thống InvoiceAI
+
+' Actors
+:User: as User
+:Admin: as Admin
+:System: as System
+
+' Use Cases Package
+package "Invoice Processing System" {
+    
+    ' Authentication
+    rectangle "Authentication" #LightYellow {
+        (Đăng ký tài khoản) as UC1
+        (Đăng nhập) as UC2
+        (Đăng xuất) as UC3
+        (Quên mật khẩu) as UC4
+    }
+    
+    ' Invoice Management
+    rectangle "Invoice Management" #LightGreen {
+        (Upload hóa đơn) as UC5
+        (Xem danh sách hóa đơn) as UC6
+        (Xem chi tiết hóa đơn) as UC7
+        (Xóa hóa đơn) as UC8
+        (Tải xuống hóa đơn) as UC9
+        (Export báo cáo Excel) as UC10
+    }
+    
+    ' OCR Processing
+    rectangle "OCR Processing" #LightCoral {
+        (Xử lý OCR tự động) as UC11
+        (Tiền xử lý hình ảnh) as UC12
+        (Trích xuất văn bản) as UC13
+        (Nhận diện thực thể) as UC14
+        (Xác thực dữ liệu) as UC15
+    }
+    
+    ' AI Chatbot
+    rectangle "AI Chatbot" #LightPink {
+        (Truy vấn hóa đơn) as UC16
+        (Thống kê theo thời gian) as UC17
+        (Tìm kiếm theo điều kiện) as UC18
+        (Tính toán tổng tiền) as UC19
+        (So sánh hóa đơn) as UC20
+    }
+    
+    ' Admin Functions
+    rectangle "Admin Management" #Lavender {
+        (Quản lý người dùng) as UC21
+        (Xem thống kê hệ thống) as UC22
+        (Quản lý OCR jobs) as UC23
+        (Xóa dữ liệu) as UC24
+        (Xuất log hệ thống) as UC25
+    }
+    
+    ' System Internal
+    rectangle "System Processing" #WhiteSmoke {
+        (Lưu trữ database) as UC26
+        (Vector indexing) as UC27
+        (Background job) as UC28
+        (Email notification) as UC29
+    }
+}
+
+' User relationships
+User --> UC1
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC16
+User --> UC17
+User --> UC18
+User --> UC19
+User --> UC20
+
+' Admin relationships (Admin extends User)
+Admin --|> User
+Admin --> UC21
+Admin --> UC22
+Admin --> UC23
+Admin --> UC24
+Admin --> UC25
+
+' System relationships
+System --> UC11
+System --> UC12
+System --> UC13
+System --> UC14
+System --> UC15
+System --> UC26
+System --> UC27
+System --> UC28
+System --> UC29
+
+' Include relationships
+UC5 .> UC11 : <<include>>
+UC11 .> UC12 : <<include>>
+UC11 .> UC13 : <<include>>
+UC11 .> UC14 : <<include>>
+UC11 .> UC15 : <<include>>
+UC11 .> UC26 : <<include>>
+UC11 .> UC27 : <<include>>
+
+UC16 .> UC27 : <<include>>
+UC17 .> UC27 : <<include>>
+UC18 .> UC27 : <<include>>
+
+UC10 .> UC6 : <<extend>>
+UC20 .> UC16 : <<extend>>
+
+' Notes
+note right of UC11
+  Dual OCR Strategy:
+  1. Tesseract (fast)
+  2. EasyOCR (fallback)
+  Confidence threshold: 70%
+end note
+
+note right of UC16
+  RAG-based chatbot
+  using Groq + Pinecone
+  Support natural language
+end note
+
+note bottom of Admin
+  Admin có tất cả
+  quyền của User
+  + quyền quản trị
+end note
+
+@enduml

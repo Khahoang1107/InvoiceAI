@@ -2,175 +2,79 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Optional
 from pydantic import BaseModel
 import logging
-import os
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from routers.auth import get_current_user as get_current_user_auth
+from utils.auth_utils import get_current_user
+from services.chat_service import ChatService
+from schemas.models import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-# Security scheme for extracting token from Authorization header
-security = HTTPBearer()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Dependency to get current authenticated user from JWT token in Authorization header"""
-    try:
-        # Extract token from Authorization header
-        token = credentials.credentials
-        # Get user service and verify token
-        from services.user_service import UserService
-        user_service = UserService()
-        user_id = user_service.verify_token(token)
-        user = await user_service.get_user_by_id(user_id)
-        return user
-    except Exception as e:
-        logger.error(f"Authentication failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
 class ChatMessage(BaseModel):
     message: str
     conversation_id: Optional[str] = None
 
-# Global chat handler instance (initialized on first use)
-_chat_handler = None
-
-def get_chat_handler():
-    """Initialize and return Groq chat handler"""
-    global _chat_handler
-    
-    if _chat_handler is None:
-        try:
-            # Get database tools based on DATABASE_URL
-            database_url = os.getenv('DATABASE_URL', '')
-            
-            if database_url and not database_url.startswith('sqlite'):
-                from utils.database_tools_postgres import get_database_tools
-            else:
-                from utils.database_tools_sqlite import get_database_tools
-            
-            db_tools = get_database_tools()
-            
-            # Import and setup Groq tools
-            from groq_tools import GroqDatabaseTools
-            groq_tools = GroqDatabaseTools(db_tools)
-            
-            # Import and setup Groq handler
-            from handlers.groq_chat_handler import GroqChatHandler
-            _chat_handler = GroqChatHandler(db_tools=db_tools, groq_tools=groq_tools)
-            
-            logger.info("✅ Groq chat handler initialized successfully")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to initialize Groq handler: {e}")
-            _chat_handler = None
-    
-    return _chat_handler
+# Dependency for chat service - lazy initialization
+def get_chat_service() -> ChatService:
+    """Get chat service instance"""
+    return ChatService()
 
 @router.post("/")
-async def chat(request: ChatMessage, current_user: dict = Depends(get_current_user)):
+async def chat(
+    request: ChatMessage, 
+    current_user = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service)
+):
     """
-    Chat endpoint - Process message through Groq AI
+    Chat endpoint with RAG - Process message through Groq AI with retrieved context
     
     Features:
-    - Natural language understanding
-    - Database operations via function calling
-    - Context-aware responses
-    - Invoice management commands
+    - Natural language understanding with RAG
+    - Context-aware responses using vector search
+    - Invoice data retrieval and analysis
+    - Safe responses (admits when information not found)
     """
     try:
-        logger.info(f"Chat message from user {current_user.id}: {request.message[:50]}...")
+        logger.info(f"RAG Chat message from user {current_user.user_id}: {request.message[:50]}...")
         
-        # Get or initialize chat handler
-        chat_handler = get_chat_handler()
+        # Create ChatRequest object
+        chat_request = ChatRequest(
+            message=request.message,
+            conversation_id=request.conversation_id
+        )
         
-        if chat_handler is None:
-            # Fallback response with basic intent recognition when Groq not available
-            message_lower = request.message.lower().strip()
-            
-            # Check for export/xuất intent
-            export_keywords = ["xuất", "export", "tải", "download", "báo cáo", "excel"]
-            if any(keyword in message_lower for keyword in export_keywords):
-                return {
-                    "response": """📊 **Xuất báo cáo hóa đơn**
-
-Vui lòng chọn:
-1. **Xuất Excel tất cả** - Tất cả hóa đơn
-2. **Xuất Excel hôm nay** - Hóa đơn hôm nay
-3. **Xuất Excel theo loại** - Lọc theo loại hóa đơn
-
-💡 Hoặc vào phần **"Quản lý hóa đơn"** → Chọn hóa đơn → Nhấn nút **"Xuất Excel"**""",
-                    "conversation_id": request.conversation_id or "default",
-                    "success": True,
-                    "type": "export_guide"
-                }
-            
-            # Check for statistics/thống kê intent
-            stats_keywords = ["thống kê", "statistics", "tổng", "số lượng", "bao nhiêu"]
-            if any(keyword in message_lower for keyword in stats_keywords):
-                try:
-                    # Get database tools
-                    database_url = os.getenv('DATABASE_URL', '')
-                    if database_url and not database_url.startswith('sqlite'):
-                        from utils.database_tools_postgres import get_database_tools
-                    else:
-                        from utils.database_tools_sqlite import get_database_tools
-                    
-                    db_tools = get_database_tools()
-                    stats = db_tools.get_statistics()
-                    
-                    return {
-                        "response": f"""📊 **Thống kê hóa đơn**
-
-📋 Tổng số hóa đơn: **{stats.get('total_invoices', 0)}**
-💰 Tổng tiền: **{stats.get('total_amount_sum', 0):,.0f} VND**
-📅 7 ngày gần nhất: **{stats.get('recent_7days', 0)}** hóa đơn""",
-                        "conversation_id": request.conversation_id or "default",
-                        "success": True,
-                        "type": "statistics"
-                    }
-                except Exception as e:
-                    logger.error(f"Error getting statistics: {e}")
-            
-            # Default fallback
-            return {
-                "response": """⚠️ Groq AI chưa được cấu hình.
-
-🎯 Tôi có thể giúp bạn:
-1. 📋 Xem danh sách hóa đơn
-2. 🔍 Tìm kiếm hóa đơn
-3. 📊 Xem thống kê
-4. 📤 Xuất báo cáo Excel
-
-Vui lòng kiểm tra GROQ_API_KEY trong file .env""",
-                "conversation_id": request.conversation_id or "default",
-                "success": False,
-                "type": "error"
-            }
-        
-        # Process message through Groq
-        user_id = request.conversation_id or "default"
-        response = await chat_handler.chat(request.message, user_id=user_id)
+        # Process through ChatService with RAG
+        user_id = current_user.user_id or 1  # Default to user ID 1 if not available
+        response = await chat_service.send_message(user_id, chat_request)
         
         # Format response for frontend
         return {
-            "response": response.get("message", ""),
-            "conversation_id": user_id,
+            "response": response.response,
+            "conversation_id": response.conversation_id,
             "success": True,
-            "type": response.get("type", "text"),
+            "type": "rag_response",
             "metadata": {
-                "model": response.get("model"),
-                "method": response.get("method"),
-                "tools_used": response.get("tools_used", [])
+                "tokens_used": response.tokens_used,
+                "rag_enabled": chat_service.rag_available,
+                "model": "mixtral-8x7b-32768"
             }
         }
         
     except Exception as e:
-        logger.error(f"Chat failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Chat failed: {str(e)}"
-        )
+        logger.error(f"RAG Chat failed: {str(e)}")
+        
+        # Provide helpful fallback response
+        return {
+            "response": """⚠️ Xin lỗi, tôi gặp sự cố khi xử lý câu hỏi của bạn.
+
+💡 **Gợi ý:**
+- Kiểm tra kết nối internet
+- Thử hỏi lại với câu khác
+- Upload thêm hóa đơn để tôi có thêm dữ liệu
+
+Nếu vấn đề tiếp tục, vui lòng liên hệ hỗ trợ.""",
+            "conversation_id": request.conversation_id or "default",
+            "success": False,
+            "type": "error",
+            "error": str(e)
+        }
 

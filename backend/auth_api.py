@@ -23,28 +23,30 @@ async def register_user(user: UserCreate):
             raise HTTPException(status_code=500, detail="DB connection failed")
         
         with conn.cursor() as cursor:
-            username = user.username or user.email.split("@")[0]
-            cursor.execute("SELECT id FROM users WHERE username = %s OR email = %s", (username, user.email))
+            # Check if user exists
+            cursor.execute("SELECT id FROM users WHERE email = %s", (user.email,))
             if cursor.fetchone():
                 raise HTTPException(status_code=400, detail="User exists")
             
             password_hash = get_password_hash(user.password)
+            name = user.full_name or user.username or user.email.split("@")[0]
             cursor.execute("""
-                INSERT INTO users (username, email, password_hash, full_name, role, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, username, email, full_name, role, is_active, created_at
-            """, (username, user.email, password_hash, user.full_name, UserRole.USER.value, datetime.utcnow()))
+                INSERT INTO users (email, name, hashed_password, role, is_admin, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, email, name, role, is_admin, is_active, created_at
+            """, (user.email, name, password_hash, UserRole.USER.value, 0, 1, datetime.utcnow(), datetime.utcnow()))
             
             result = cursor.fetchone()
             conn.commit()
             
             return UserResponse(
                 id=result["id"],
-                username=result["username"],
+                username=result["name"],
                 email=result["email"],
-                full_name=result["full_name"],
+                full_name=result["name"],
                 role=UserRole(result["role"]),
-                is_active=result["is_active"],
+                is_active=bool(result["is_active"]),
+                is_admin=bool(result["is_admin"]),
                 created_at=result["created_at"],
                 last_login=None
             )
@@ -64,12 +66,12 @@ async def login_user(user_credentials: UserLogin):
         
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT id, username, email, password_hash, full_name, role, is_active, created_at, last_login
+                SELECT id, email, name, hashed_password, role, is_admin, is_active, created_at, last_login
                 FROM users WHERE email = %s
             """, (user_credentials.email,))
             
             result = cursor.fetchone()
-            if not result or not verify_password(user_credentials.password, result["password_hash"]):
+            if not result or not verify_password(user_credentials.password, result["hashed_password"]):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             
             cursor.execute("UPDATE users SET last_login = %s WHERE id = %s", (datetime.utcnow(), result["id"]))
@@ -78,17 +80,19 @@ async def login_user(user_credentials: UserLogin):
             access_token = create_access_token({
                 "sub": result["email"],
                 "user_id": result["id"],
-                "username": result["username"],
-                "role": result["role"]
+                "username": result["name"],
+                "role": result["role"],
+                "is_admin": bool(result["is_admin"])
             })
             
             user_response = UserResponse(
                 id=result["id"],
-                username=result["username"],
+                username=result["name"],
                 email=result["email"],
-                full_name=result["full_name"],
+                full_name=result["name"],
                 role=UserRole(result["role"]),
-                is_active=result["is_active"],
+                is_active=bool(result["is_active"]),
+                is_admin=bool(result["is_admin"]),
                 created_at=result["created_at"],
                 last_login=datetime.utcnow()
             )
@@ -110,7 +114,7 @@ async def get_current_user_info(current_user_data=Depends(get_current_user)):
         
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT id, username, email, full_name, role, is_active, created_at, last_login
+                SELECT id, name, email, role, is_admin, is_active, created_at, last_login
                 FROM users WHERE email = %s
             """, (current_user_data.username,))
             
@@ -120,11 +124,12 @@ async def get_current_user_info(current_user_data=Depends(get_current_user)):
             
             return UserResponse(
                 id=result["id"],
-                username=result["username"],
+                username=result["name"],
                 email=result["email"],
-                full_name=result["full_name"],
+                full_name=result["name"],
                 role=UserRole(result["role"]),
                 is_active=result["is_active"],
+                is_admin=bool(result["is_admin"]),
                 created_at=result["created_at"],
                 last_login=result["last_login"]
             )

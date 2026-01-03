@@ -95,8 +95,8 @@ class UserService:
         except Exception as e:
             raise DatabaseException(f"Failed to retrieve user: {str(e)}")
     
-    def create_access_token(self, user_id: int, expires_delta: Optional[timedelta] = None) -> str:
-        """Generate JWT access token"""
+    def create_access_token(self, user_id: int, expires_delta: Optional[timedelta] = None, user_role: str = None, is_admin: bool = False) -> str:
+        """Generate JWT access token with role and is_admin"""
         if expires_delta is None:
             expires_delta = timedelta(minutes=30)
         
@@ -104,8 +104,12 @@ class UserService:
         payload = {
             "sub": str(user_id),
             "exp": expire,
-            "iat": datetime.utcnow()
+            "iat": datetime.utcnow(),
+            "role": user_role or "user",
+            "is_admin": is_admin
         }
+        
+        print(f"🔐 Creating JWT with payload: {payload}")
         
         token = jwt.encode(
             payload,

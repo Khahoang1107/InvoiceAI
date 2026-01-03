@@ -53,6 +53,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { toast } from 'sonner';
+import { apiService } from '../services/apiService';
+import { useEffect } from 'react';
 
 interface AdminDashboardProps {
   user: {
@@ -67,6 +69,29 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [invoicesSubMenu, setInvoicesSubMenu] = useState<'upload' | 'text'>('upload');
   
+  // Users Management State
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  
+  // Dashboard Statistics State
+  const [dashboardStats, setDashboardStats] = useState({
+    totalUsers: 0,
+    totalInvoices: 0,
+    revenue: 0,
+    activity: 0
+  });
+  const [userStats, setUserStats] = useState({
+    total_users: 0,
+    admin_count: 0,
+    active_count: 0,
+    inactive_count: 0
+  });
+  const [recentActivities, setRecentActivities] = useState<any[]>([]);
+  const [topUsers, setTopUsers] = useState<any[]>([]);
+  const [monthlyData, setMonthlyData] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  
   // Form Builder State
   const [formFields, setFormFields] = useState<any[]>([]);
   const [formName, setFormName] = useState('Biểu mẫu mới');
@@ -76,6 +101,124 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  
+  // New Invoice Form State
+  const [newInvoice, setNewInvoice] = useState({
+    invoice_number: '',
+    customer_name: '',
+    customer_email: '',
+    customer_address: '',
+    issue_date: new Date().toISOString().split('T')[0],
+    due_date: '',
+    vendor: '',
+    tax_code: '',
+    amount: 0,
+    tax: 0,
+    total_amount: 0,
+    status: 'pending',
+    notes: '',
+    items: [
+      { name: '', quantity: 1, price: 0, total: 0 },
+      { name: '', quantity: 1, price: 0, total: 0 }
+    ]
+  });
+  const [savingInvoice, setSavingInvoice] = useState(false);
+  const [adminInvoices, setAdminInvoices] = useState<any[]>([]);
+
+  // Fetch users when switching to users menu
+  useEffect(() => {
+    if (activeMenu === 'users') {
+      fetchUsers();
+    }
+  }, [activeMenu]);
+
+  // Fetch dashboard stats when component mounts or when switching to dashboard
+  useEffect(() => {
+    if (activeMenu === 'dashboard') {
+      fetchDashboardStats();
+    }
+  }, [activeMenu]);
+
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    setUsersError(null);
+    try {
+      const usersData = await apiService.getAllUsers();
+      console.log('✅ Fetched users:', usersData);
+      setUsers(usersData);
+      toast.success(`Đã tải ${usersData.length} người dùng`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Không thể tải danh sách người dùng';
+      console.error('❌ Error fetching users:', error);
+      setUsersError(errorMsg);
+      toast.error(errorMsg);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const fetchDashboardStats = async () => {
+    setLoadingStats(true);
+    try {
+      // Fetch all statistics in parallel
+      const [userStatsResponse, invoiceStatsResponse] = await Promise.all([
+        apiService.getUserStatistics(),
+        apiService.getInvoiceStatistics().catch(() => ({ data: { total_invoices: 0, total_amount: 0 } }))
+      ]);
+      
+      console.log('✅ Fetched stats:', { userStatsResponse, invoiceStatsResponse });
+      
+      const userStats = userStatsResponse.data;
+      const invoiceStats = invoiceStatsResponse.data;
+      
+      setUserStats(userStats);
+      setDashboardStats({
+        totalUsers: userStats.total_users,
+        totalInvoices: invoiceStats.total_invoices || 0,
+        revenue: invoiceStats.total_amount || 0,
+        activity: userStats.recent_7days
+      });
+
+      // Fetch additional dashboard data
+      fetchRecentActivities();
+      fetchTopUsers();
+      fetchMonthlyData();
+    } catch (error) {
+      console.error('❌ Error fetching dashboard stats:', error);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  const fetchRecentActivities = async () => {
+    try {
+      const activities = await apiService.getRecentActivities();
+      setRecentActivities(activities.data || []);
+    } catch (error) {
+      console.error('❌ Error fetching activities:', error);
+      setRecentActivities([]);
+    }
+  };
+
+  const fetchTopUsers = async () => {
+    try {
+      const users = await apiService.getTopUsers();
+      setTopUsers(users.data || []);
+    } catch (error) {
+      console.error('❌ Error fetching top users:', error);
+      setTopUsers([]);
+    }
+  };
+
+  const fetchMonthlyData = async () => {
+    try {
+      const data = await apiService.getMonthlyStatistics();
+      setMonthlyData(data.data || null);
+    } catch (error) {
+      console.error('❌ Error fetching monthly data:', error);
+      setMonthlyData(null);
+    }
+  };
 
   const menuItems = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null },
@@ -145,6 +288,158 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     setFormFields(formFields.filter(field => field.id !== id));
   };
 
+  // Helper functions for invoice form
+  const updateInvoiceItem = (index: number, field: string, value: any) => {
+    const newItems = [...newInvoice.items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    
+    // Calculate item total
+    if (field === 'quantity' || field === 'price') {
+      newItems[index].total = newItems[index].quantity * newItems[index].price;
+    }
+    
+    // Calculate invoice totals
+    const subtotal = newItems.reduce((sum, item) => sum + item.total, 0);
+    const tax = subtotal * 0.1; // 10% VAT
+    const total = subtotal + tax;
+    
+    setNewInvoice({
+      ...newInvoice,
+      items: newItems,
+      amount: subtotal,
+      tax: tax,
+      total_amount: total
+    });
+  };
+  
+  const addInvoiceItem = () => {
+    setNewInvoice({
+      ...newInvoice,
+      items: [...newInvoice.items, { name: '', quantity: 1, price: 0, total: 0 }]
+    });
+  };
+  
+  const removeInvoiceItem = (index: number) => {
+    if (newInvoice.items.length <= 1) {
+      toast.error('Cần ít nhất 1 sản phẩm/dịch vụ!');
+      return;
+    }
+    const newItems = newInvoice.items.filter((_, i) => i !== index);
+    const subtotal = newItems.reduce((sum, item) => sum + item.total, 0);
+    const tax = subtotal * 0.1;
+    const total = subtotal + tax;
+    
+    setNewInvoice({
+      ...newInvoice,
+      items: newItems,
+      amount: subtotal,
+      tax: tax,
+      total_amount: total
+    });
+  };
+  
+  const saveInvoice = async () => {
+    // Validation
+    if (!newInvoice.invoice_number.trim()) {
+      toast.error('Vui lòng nhập mã hóa đơn!');
+      return;
+    }
+    if (!newInvoice.customer_name.trim()) {
+      toast.error('Vui lòng nhập tên khách hàng!');
+      return;
+    }
+    if (!newInvoice.vendor.trim()) {
+      toast.error('Vui lòng nhập tên nhà cung cấp!');
+      return;
+    }
+    
+    const validItems = newInvoice.items.filter(item => item.name.trim() && item.quantity > 0 && item.price > 0);
+    if (validItems.length === 0) {
+      toast.error('Vui lòng thêm ít nhất 1 sản phẩm hợp lệ!');
+      return;
+    }
+    
+    setSavingInvoice(true);
+    try {
+      // Prepare invoice data for API
+      const invoiceData = {
+        invoice_number: newInvoice.invoice_number,
+        customer_name: newInvoice.customer_name,
+        customer_email: newInvoice.customer_email || null,
+        customer_address: newInvoice.customer_address || null,
+        vendor: newInvoice.vendor,
+        tax_code: newInvoice.tax_code || null,
+        issue_date: newInvoice.issue_date,
+        due_date: newInvoice.due_date || null,
+        amount: newInvoice.amount,
+        tax: newInvoice.tax,
+        total_amount: newInvoice.total_amount,
+        status: newInvoice.status,
+        notes: newInvoice.notes || null,
+        items: JSON.stringify(validItems),
+        extracted_data: JSON.stringify({
+          customer: {
+            name: newInvoice.customer_name,
+            email: newInvoice.customer_email,
+            address: newInvoice.customer_address
+          },
+          items: validItems,
+          subtotal: newInvoice.amount,
+          tax: newInvoice.tax,
+          total: newInvoice.total_amount
+        })
+      };
+      
+      // Call API to save invoice
+      const response = await apiService.createInvoice(invoiceData);
+      
+      console.log('📝 Invoice created:', response);
+      
+      toast.success(`✅ Đã tạo hóa đơn ${newInvoice.invoice_number} thành công!`);
+      
+      // Reset form
+      setNewInvoice({
+        invoice_number: '',
+        customer_name: '',
+        customer_email: '',
+        customer_address: '',
+        issue_date: new Date().toISOString().split('T')[0],
+        due_date: '',
+        vendor: '',
+        tax_code: '',
+        amount: 0,
+        tax: 0,
+        total_amount: 0,
+        status: 'pending',
+        notes: '',
+        items: [
+          { name: '', quantity: 1, price: 0, total: 0 },
+          { name: '', quantity: 1, price: 0, total: 0 }
+        ]
+      });
+      
+      // Refresh invoices list
+      fetchAdminInvoices();
+      
+    } catch (error) {
+      console.error('❌ Error saving invoice:', error);
+      toast.error('Lỗi khi lưu hóa đơn: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
+      setSavingInvoice(false);
+    }
+  };
+  
+  const fetchAdminInvoices = async () => {
+    try {
+      // TODO: Add API endpoint for getting user's invoices
+      // const invoices = await apiService.getUserInvoices();
+      // setAdminInvoices(invoices);
+      console.log('📋 Fetching admin invoices...');
+    } catch (error) {
+      console.error('❌ Error fetching invoices:', error);
+    }
+  };
+  
   // Save form
   const saveForm = () => {
     toast.success(`Đã lưu biểu mẫu: ${formName}\nSố trường: ${formFields.length}`);
@@ -631,7 +926,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Tổng users</p>
-                        <p className="text-2xl">1,234</p>
+                        <p className="text-2xl font-bold">{userStats.total_users}</p>
                       </div>
                       <Users className="w-8 h-8 text-blue-600" />
                     </div>
@@ -642,7 +937,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Admins</p>
-                        <p className="text-2xl">12</p>
+                        <p className="text-2xl font-bold">{userStats.admin_count}</p>
                       </div>
                       <Shield className="w-8 h-8 text-green-600" />
                     </div>
@@ -653,7 +948,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Active</p>
-                        <p className="text-2xl">1,180</p>
+                        <p className="text-2xl font-bold">{userStats.active_count}</p>
                       </div>
                       <CheckCircle2 className="w-8 h-8 text-purple-600" />
                     </div>
@@ -664,7 +959,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-muted-foreground">Inactive</p>
-                        <p className="text-2xl">54</p>
+                        <p className="text-2xl font-bold">{userStats.inactive_count}</p>
                       </div>
                       <AlertCircle className="w-8 h-8 text-orange-600" />
                     </div>
@@ -700,49 +995,83 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {['Nguyễn Văn A', 'Trần Thị B', 'Lê Văn C', 'Phạm Thị D', 'Hoàng Văn E'].map((name, idx) => (
-                          <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        {loadingUsers ? (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-12 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
+                                <span className="text-gray-600">Đang tải dữ liệu...</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : usersError ? (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-12 text-center">
+                              <div className="text-red-600">
+                                <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+                                <p>{usersError}</p>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={fetchUsers}
+                                  className="mt-4"
+                                >
+                                  Thử lại
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : users.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                              Không có người dùng nào
+                            </td>
+                          </tr>
+                        ) : (
+                          users.map((userItem) => (
+                          <tr key={userItem.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
                                 <Avatar className="w-10 h-10">
                                   <AvatarFallback className="bg-gradient-to-br from-purple-500 to-pink-500 text-white">
-                                    {name.charAt(0)}
+                                    {(userItem.username || userItem.email).charAt(0).toUpperCase()}
                                   </AvatarFallback>
                                 </Avatar>
-                                <span className="text-sm">{name}</span>
+                                <span className="text-sm font-medium">{userItem.username || userItem.full_name || userItem.email}</span>
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {name.toLowerCase().replace(/\s+/g, '')}@email.com
+                              {userItem.email}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <Badge variant={idx === 0 ? 'default' : 'outline'} className={idx === 0 ? 'bg-purple-600' : ''}>
-                                {idx === 0 ? 'Admin' : 'User'}
+                              <Badge variant={userItem.is_admin ? 'default' : 'outline'} className={userItem.is_admin ? 'bg-purple-600' : ''}>
+                                {userItem.is_admin ? 'Admin' : 'User'}
                               </Badge>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <Badge variant="outline" className={idx < 4 ? 'border-green-500 text-green-700' : 'border-gray-400 text-gray-700'}>
-                                {idx < 4 ? 'Active' : 'Inactive'}
+                              <Badge variant="outline" className={userItem.is_active ? 'border-green-500 text-green-700' : 'border-gray-400 text-gray-700'}>
+                                {userItem.is_active ? 'Active' : 'Inactive'}
                               </Badge>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                              {new Date(2024, 0, idx + 1).toLocaleDateString('vi-VN')}
+                              {new Date(userItem.created_at).toLocaleDateString('vi-VN')}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex gap-2">
-                                <Button variant="ghost" size="sm" className="hover:bg-blue-50">
+                                <Button variant="ghost" size="sm" className="hover:bg-blue-50" title="Xem chi tiết">
                                   <Eye className="w-4 h-4" />
                                 </Button>
-                                <Button variant="ghost" size="sm" className="hover:bg-purple-50">
+                                <Button variant="ghost" size="sm" className="hover:bg-purple-50" title="Cài đặt">
                                   <Settings className="w-4 h-4" />
                                 </Button>
-                                <Button variant="ghost" size="sm" className="hover:bg-red-50">
+                                <Button variant="ghost" size="sm" className="hover:bg-red-50" title="Xóa">
                                   <Trash2 className="w-4 h-4 text-red-600" />
                                 </Button>
                               </div>
                             </td>
                           </tr>
-                        ))}
+                        )))
+                        }
                       </tbody>
                     </table>
                   </div>
@@ -950,6 +1279,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <input
                               type="text"
                               placeholder="Công ty ABC"
+                              value={newInvoice.customer_name}
+                              onChange={(e) => setNewInvoice({...newInvoice, customer_name: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -958,6 +1289,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <input
                               type="email"
                               placeholder="customer@company.com"
+                              value={newInvoice.customer_email}
+                              onChange={(e) => setNewInvoice({...newInvoice, customer_email: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -966,6 +1299,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <input
                               type="text"
                               placeholder="123 Đường XYZ, Quận 1, TP.HCM"
+                              value={newInvoice.customer_address}
+                              onChange={(e) => setNewInvoice({...newInvoice, customer_address: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -984,6 +1319,28 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <input
                               type="text"
                               placeholder="INV-001"
+                              value={newInvoice.invoice_number}
+                              onChange={(e) => setNewInvoice({...newInvoice, invoice_number: e.target.value})}
+                              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm mb-2 block">Nhà cung cấp *</label>
+                            <input
+                              type="text"
+                              placeholder="Công ty XYZ"
+                              value={newInvoice.vendor}
+                              onChange={(e) => setNewInvoice({...newInvoice, vendor: e.target.value})}
+                              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm mb-2 block">Mã số thuế</label>
+                            <input
+                              type="text"
+                              placeholder="0123456789"
+                              value={newInvoice.tax_code}
+                              onChange={(e) => setNewInvoice({...newInvoice, tax_code: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -991,6 +1348,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <label className="text-sm mb-2 block">Ngày tạo *</label>
                             <input
                               type="date"
+                              value={newInvoice.issue_date}
+                              onChange={(e) => setNewInvoice({...newInvoice, issue_date: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
                           </div>
@@ -998,8 +1357,23 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <label className="text-sm mb-2 block">Hạn thanh toán</label>
                             <input
                               type="date"
+                              value={newInvoice.due_date}
+                              onChange={(e) => setNewInvoice({...newInvoice, due_date: e.target.value})}
                               className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
+                          </div>
+                          <div>
+                            <label className="text-sm mb-2 block">Trạng thái</label>
+                            <select
+                              value={newInvoice.status}
+                              onChange={(e) => setNewInvoice({...newInvoice, status: e.target.value})}
+                              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            >
+                              <option value="pending">Chờ xử lý</option>
+                              <option value="processing">Đang xử lý</option>
+                              <option value="completed">Hoàn thành</option>
+                              <option value="failed">Thất bại</option>
+                            </select>
                           </div>
                         </div>
                       </div>
@@ -1011,19 +1385,26 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                             <List className="w-4 h-4" />
                             Danh sách sản phẩm/dịch vụ
                           </h3>
-                          <Button size="sm" variant="outline" className="text-emerald-600 border-emerald-600 hover:bg-emerald-50">
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            className="text-emerald-600 border-emerald-600 hover:bg-emerald-50"
+                            onClick={addInvoiceItem}
+                          >
                             <Plus className="w-4 h-4 mr-1" />
                             Thêm dòng
                           </Button>
                         </div>
                         
                         <div className="space-y-3">
-                          {[1, 2].map((item) => (
-                            <div key={item} className="grid grid-cols-12 gap-3 p-4 bg-gray-50 rounded-lg">
+                          {newInvoice.items.map((item, index) => (
+                            <div key={index} className="grid grid-cols-12 gap-3 p-4 bg-gray-50 rounded-lg">
                               <div className="col-span-5">
                                 <input
                                   type="text"
                                   placeholder="Tên sản phẩm/dịch vụ"
+                                  value={item.name}
+                                  onChange={(e) => updateInvoiceItem(index, 'name', e.target.value)}
                                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                 />
                               </div>
@@ -1031,6 +1412,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                                 <input
                                   type="number"
                                   placeholder="Số lượng"
+                                  value={item.quantity}
+                                  onChange={(e) => updateInvoiceItem(index, 'quantity', parseFloat(e.target.value) || 0)}
                                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                 />
                               </div>
@@ -1038,6 +1421,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                                 <input
                                   type="number"
                                   placeholder="Đơn giá"
+                                  value={item.price}
+                                  onChange={(e) => updateInvoiceItem(index, 'price', parseFloat(e.target.value) || 0)}
                                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                                 />
                               </div>
@@ -1045,12 +1430,18 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                                 <input
                                   type="text"
                                   placeholder="Thành tiền"
+                                  value={item.total.toLocaleString('vi-VN')}
                                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100"
                                   disabled
                                 />
                               </div>
                               <div className="col-span-1 flex items-center justify-center">
-                                <Button variant="ghost" size="sm" className="hover:bg-red-50 hover:text-red-600">
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="hover:bg-red-50 hover:text-red-600"
+                                  onClick={() => removeInvoiceItem(index)}
+                                >
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
                               </div>
@@ -1063,15 +1454,15 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                       <div className="space-y-3 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
                         <div className="flex justify-between text-sm">
                           <span>Tạm tính:</span>
-                          <span className="font-semibold">₫0</span>
+                          <span className="font-semibold">₫{newInvoice.amount.toLocaleString('vi-VN')}</span>
                         </div>
                         <div className="flex justify-between text-sm">
                           <span>Thuế VAT (10%):</span>
-                          <span className="font-semibold">₫0</span>
+                          <span className="font-semibold">₫{newInvoice.tax.toLocaleString('vi-VN')}</span>
                         </div>
                         <div className="flex justify-between text-lg border-t border-emerald-300 pt-3">
                           <span>Tổng cộng:</span>
-                          <span className="font-bold text-emerald-700">₫0</span>
+                          <span className="font-bold text-emerald-700">₫{newInvoice.total_amount.toLocaleString('vi-VN')}</span>
                         </div>
                       </div>
 
@@ -1081,17 +1472,39 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                         <textarea
                           rows={3}
                           placeholder="Thêm ghi chú cho hóa đơn..."
+                          value={newInvoice.notes}
+                          onChange={(e) => setNewInvoice({...newInvoice, notes: e.target.value})}
                           className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
 
                       {/* Actions */}
                       <div className="flex gap-3 pt-4 border-t">
-                        <Button className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white">
-                          <Save className="w-4 h-4 mr-2" />
-                          Lưu hóa đơn
+                        <Button 
+                          className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white"
+                          onClick={saveInvoice}
+                          disabled={savingInvoice}
+                        >
+                          {savingInvoice ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Đang lưu...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="w-4 h-4 mr-2" />
+                              Lưu hóa đơn
+                            </>
+                          )}
                         </Button>
-                        <Button variant="outline" className="flex-1">
+                        <Button 
+                          variant="outline" 
+                          className="flex-1"
+                          onClick={() => {
+                            console.log('📄 Invoice Preview:', newInvoice);
+                            toast.info('Xem trước hóa đơn: ' + newInvoice.invoice_number);
+                          }}
+                        >
                           <Eye className="w-4 h-4 mr-2" />
                           Xem trước
                         </Button>
@@ -1954,7 +2367,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl mb-1">1,234</div>
+                <div className="text-3xl mb-1">{loadingStats ? '...' : dashboardStats.totalUsers.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
                   <span className="text-green-600">↑ +12%</span> so với tháng trước
                 </p>
@@ -1969,7 +2382,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl mb-1">45,231</div>
+                <div className="text-3xl mb-1">{loadingStats ? '...' : dashboardStats.totalInvoices.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
                   <span className="text-green-600">↑ +20%</span> so với tháng trước
                 </p>
@@ -1984,7 +2397,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl mb-1">$12,345</div>
+                <div className="text-3xl mb-1">${loadingStats ? '...' : dashboardStats.revenue.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
                   <span className="text-green-600">↑ +18%</span> so với tháng trước
                 </p>
@@ -1999,7 +2412,7 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl mb-1">573</div>
+                <div className="text-3xl mb-1">{loadingStats ? '...' : dashboardStats.activity.toLocaleString()}</div>
                 <p className="text-xs text-muted-foreground">
                   <span className="text-green-600">↑ +7%</span> so với tuần trước
                 </p>
@@ -2021,20 +2434,19 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
               </CardHeader>
               <CardContent className="p-6">
                 <div className="space-y-4">
-                  {[
-                    { user: 'Nguyễn Văn A', action: 'Tạo hóa đơn mới', time: '5 phút trước' },
-                    { user: 'Trần Thị B', action: 'Cập nhật thông tin', time: '15 phút trước' },
-                    { user: 'Lê Văn C', action: 'Thanh toán hóa đơn', time: '30 phút trước' },
-                    { user: 'Phạm Thị D', action: 'Đăng ký tài khoản', time: '1 giờ trước' },
-                  ].map((activity, idx) => (
-                    <div key={idx} className="flex items-center justify-between pb-3 border-b last:border-0">
-                      <div>
-                        <p className="text-sm">{activity.user}</p>
-                        <p className="text-xs text-muted-foreground">{activity.action}</p>
+                  {recentActivities.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Chưa có hoạt động nào</p>
+                  ) : (
+                    recentActivities.slice(0, 4).map((activity, idx) => (
+                      <div key={idx} className="flex items-center justify-between pb-3 border-b last:border-0">
+                        <div>
+                          <p className="text-sm">{activity.user}</p>
+                          <p className="text-xs text-muted-foreground">{activity.action}</p>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{activity.time}</p>
                       </div>
-                      <p className="text-xs text-muted-foreground">{activity.time}</p>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -2051,27 +2463,26 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
               </CardHeader>
               <CardContent className="p-6">
                 <div className="space-y-4">
-                  {[
-                    { name: 'Nguyễn Văn A', invoices: 45, email: 'user1@example.com' },
-                    { name: 'Trần Thị B', invoices: 38, email: 'user2@example.com' },
-                    { name: 'Lê Văn C', invoices: 32, email: 'user3@example.com' },
-                    { name: 'Phạm Thị D', invoices: 28, email: 'user4@example.com' },
-                  ].map((user, idx) => (
-                    <div key={idx} className="flex items-center justify-between pb-3 border-b last:border-0">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="w-8 h-8 border-2 border-purple-100">
-                          <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white text-xs">
-                            {user.name.charAt(0)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="text-sm">{user.name}</p>
-                          <p className="text-xs text-muted-foreground">{user.email}</p>
+                  {topUsers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Chưa có dữ liệu người dùng</p>
+                  ) : (
+                    topUsers.slice(0, 4).map((user, idx) => (
+                      <div key={idx} className="flex items-center justify-between pb-3 border-b last:border-0">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="w-8 h-8 border-2 border-purple-100">
+                            <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white text-xs">
+                              {user.name.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm">{user.name}</p>
+                            <p className="text-xs text-muted-foreground">{user.email}</p>
+                          </div>
                         </div>
+                        <Badge variant="secondary" className="bg-purple-100 text-purple-700">{user.invoice_count} hóa đơn</Badge>
                       </div>
-                      <Badge variant="secondary" className="bg-purple-100 text-purple-700">{user.invoices} hóa đơn</Badge>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>

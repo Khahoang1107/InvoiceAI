@@ -1,0 +1,61 @@
+╔══════════════════════════════════════════════════════════════╗
+║                   🚀 InvoiceAI Setup                        ║
+║              AI-Powered Invoice Management System            ║
+╚══════════════════════════════════════════════════════════════╝
+
+📖 LẦN ĐẦU MỞ PROJECT:
+   1. Đọc file: QUICK_START.md
+   2. Chạy: backend\setup_py312.bat
+   3. Xong! Môi trường đã sẵn sàng.
+
+🚀 MỖI LẦN CHẠY LẠI:
+
+   Cửa sổ Terminal 1 - Backend:
+   ┌─────────────────────────────────────┐
+   │ cd backend                          │
+   │ start_py312.bat                     │
+   └─────────────────────────────────────┘
+   → Backend chạy tại http://localhost:8000
+
+   Cửa sổ Terminal 2 - Frontend:
+   ┌─────────────────────────────────────┐
+   │ cd frontend                         │
+   │ npm run dev                         │
+   └─────────────────────────────────────┘
+   → Frontend chạy tại http://localhost:5173
+
+📚 HƯỚNG DẪN CHI TIẾT:
+   • QUICK_START.md       - Hướng dẫn nhanh
+   • PYTHON312_SETUP.md   - Setup Python 3.12 chi tiết
+   • ENVIRONMENT_GUIDE.md - Quản lý môi trường
+   • ENVIRONMENT_CHECK.md - Kiểm tra cài đặt
+
+🆘 GẶP LỖI:
+   • Backend không chạy    → Đọc ENVIRONMENT_GUIDE.md
+   • Module not found      → Chạy setup_py312.bat lại
+   • Port 8000 bị chiếm    → netstat -ano | findstr :8000
+
+⚙️ CẤU TRÚC MÔI TRƯỜNG:
+   backend/
+   ├── venv312/           ← Python 3.12 environment (GIỮ NGUYÊN!)
+   ├── models/
+   │   └── invoice_ner/   ← Trained NER model (GIỮ NGUYÊN!)
+   ├── start_py312.bat    ← Script chạy backend
+   └── setup_py312.bat    ← Script setup lần đầu
+
+🎯 TÍNH NĂNG:
+   ✅ OCR với Tesseract + NER
+   ✅ AI Chatbot (Groq LLM)
+   ✅ Vector Search (Pinecone)
+   ✅ Invoice Management
+   ✅ Vietnamese Language Support
+
+📧 LƯU Ý QUAN TRỌNG:
+   1. KHÔNG XÓA thư mục venv312/
+   2. KHÔNG XÓA thư mục models/invoice_ner/
+   3. GIỮ file .env với API keys
+   4. LUÔN dùng start_py312.bat để chạy backend
+
+═══════════════════════════════════════════════════════════════
+Happy Coding! 🎉
+═══════════════════════════════════════════════════════════════

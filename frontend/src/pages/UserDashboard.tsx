@@ -325,6 +325,12 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         body: formData
       });
       
+      // Check if response is OK first
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new Error(errorData.detail || `Upload failed with status ${response.status}`);
+      }
+      
       const data = await response.json();
       
       // Check for OCR error
@@ -332,12 +338,12 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         setIsTyping(false);
         
         let errorMessage = `❌ **${data.message}**\n\n`;
-        errorMessage += `⚠️ **Lý do:** ${data.details.reason}\n\n`;
+        errorMessage += `⚠️ **Lý do:** ${data.details?.reason || 'OCR không khả dụng'}\n\n`;
         errorMessage += `🔧 **Cách khắc phục:**\n\n`;
-        data.details.instructions.forEach((instruction: string, index: number) => {
+        (data.details?.instructions || []).forEach((instruction: string, index: number) => {
           errorMessage += `${instruction}\n`;
         });
-        errorMessage += `\n📥 **Link tải:** ${data.details.download_url}\n\n`;
+        errorMessage += `\n📥 **Link tải:** ${data.details?.download_url || 'https://github.com/UB-Mannheim/tesseract/wiki'}\n\n`;
         errorMessage += `💡 **Lưu ý:** Sau khi cài đặt, nhớ restart backend server!`;
         
         addBotMessage(errorMessage);
@@ -346,8 +352,9 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         return;
       }
       
-      if (!response.ok) {
-        throw new Error('Upload failed');
+      // Validate response structure
+      if (!data.invoice) {
+        throw new Error('Invalid response: missing invoice data');
       }
       const invoice = data.invoice;
       

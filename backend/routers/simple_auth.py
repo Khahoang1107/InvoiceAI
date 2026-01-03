@@ -6,16 +6,21 @@ from typing import Optional
 from datetime import datetime, timedelta
 import jwt
 import bcrypt
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 # Mock user storage (in-memory)
 MOCK_USERS = {}
 
-# JWT Secret (use environment variable in production)
-SECRET_KEY = "your-secret-key-change-this-in-production"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# JWT Secret - Use same settings as auth_utils
+from config.settings import settings
+SECRET_KEY = settings.SECRET_KEY
+ALGORITHM = settings.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 
 # Request/Response Models

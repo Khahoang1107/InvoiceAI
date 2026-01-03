@@ -1,45 +1,27 @@
 version: '3.8'
 
 services:
-  # Core Database Service
-  postgres:
-    image: postgres:15-alpine
-    container_name: invoice_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-invoice_db}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - invoice_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Backend API Service
+  # Backend API Service (uses Railway Cloud PostgreSQL)
   backend:
     build: 
       context: ./backend
       dockerfile: Dockerfile
     container_name: invoice_backend
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/${POSTGRES_DB:-invoice_db}
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-jwt-secret-key}
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DATABASE_URL=postgresql://postgres:GMwwQpAoEifdnriKhrfzPEkCtGmmabQb@shinkansen.proxy.rlwy.net:16775/railway
+      - SECRET_KEY=dev-secret-key
+      - JWT_SECRET_KEY=jwt-secret-key
+      - GROQ_API_KEY=YOUR_GROQ_API_KEY_HERE
+      - PINECONE_API_KEY=
+      - GOOGLE_AI_API_KEY=YOUR_GOOGLE_AI_API_KEY_HERE
       - PORT=8000
+      - ENVIRONMENT=production
+      - DEBUG=false
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - invoice_network
     volumes:
@@ -68,5 +50,4 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
   backend_uploads:

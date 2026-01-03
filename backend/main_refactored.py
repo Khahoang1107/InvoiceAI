@@ -58,7 +58,7 @@ except ImportError:
     auth_api_router = None
 
 try:
-    from admin_api import router as admin_api_router
+    from admin_api import admin_router as admin_api_router
 except ImportError:
     admin_api_router = None
 
@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     try:
         # Create database tables
         from models.user import Base
-        from models.chat import ChatHistory, UserSession
+        # from models.chat import ChatHistory, UserSession  # Commented out - models not implemented yet
         engine = container.engine
         Base.metadata.create_all(bind=engine)
         logger.info("✅ Database tables created")
@@ -234,7 +234,7 @@ if auth_api_router:
     logger.info("✅ Legacy auth_api router registered")
 
 if admin_api_router:
-    app.include_router(admin_api_router)
+    app.include_router(admin_api_router, prefix="/api")
     logger.info("✅ Legacy admin_api router registered")
 
 
@@ -244,10 +244,11 @@ if __name__ == "__main__":
     
     logger.info(f"Starting server on http://0.0.0.0:{settings.PORT}")
     
+    # Disable reload to avoid Python 3.14 multiprocessing bug
     uvicorn.run(
         "main_refactored:app",
         host="0.0.0.0",
         port=settings.PORT,
-        reload=settings.DEBUG,
+        reload=False,  # Temporarily disabled for Python 3.14 compatibility
         log_level="info"
     )

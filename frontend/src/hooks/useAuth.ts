@@ -1,12 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { User, LoginCredentials } from '../types';
 import { AuthService } from '../services/authService';
 import { apiService } from '../services/apiService';
 
 export function useAuth() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true); // Start with true for initial check
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-check token on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          console.log('🔄 Auto-checking authentication...');
+          const user = await apiService.getCurrentUser();
+          console.log('✅ Auto-login successful:', user);
+          setCurrentUser(user);
+        } catch (err) {
+          console.error('❌ Auto-login failed:', err);
+          localStorage.removeItem('token');
+        }
+      }
+      setIsLoading(false);
+    };
+    checkAuth();
+  }, []);
 
   const login = async (credentials: LoginCredentials): Promise<boolean> => {
     setIsLoading(true);

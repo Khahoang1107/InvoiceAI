@@ -1,0 +1,66 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv312/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    
+    "python.analysis.extraPaths": [
+      "${workspaceFolder}/backend"
+    ],
+    
+    "python.languageServer": "Pylance",
+    "python.analysis.typeCheckingMode": "basic",
+    
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/*.pyc": true,
+      "**/venv": true
+    },
+    
+    "terminal.integrated.env.windows": {
+      "PYTHONPATH": "${workspaceFolder}/backend"
+    },
+    
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": false,
+    
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.black-formatter",
+      "editor.formatOnSave": false,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+      }
+    }
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Backend: FastAPI (Python 3.12)",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/backend/main_refactored.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/backend",
+        "python": "${workspaceFolder}/backend/venv312/Scripts/python.exe",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/backend"
+        }
+      },
+      {
+        "name": "Frontend: Vite Dev",
+        "type": "node",
+        "request": "launch",
+        "cwd": "${workspaceFolder}/frontend",
+        "runtimeExecutable": "npm",
+        "runtimeArgs": ["run", "dev"],
+        "console": "integratedTerminal"
+      }
+    ]
+  }
+}

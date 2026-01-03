@@ -1,0 +1,314 @@
+@startuml InvoiceAI Use Case Diagram
+!define RECTANGLE_BGCOLOR #E8F4F8
+!define ADMIN_COLOR #FF6B6B
+!define USER_COLOR #4ECDC4
+!define GUEST_COLOR #95E1D3
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam usecase {
+    BackgroundColor #FFF9E6
+    BorderColor #FFD700
+    BorderThickness 2
+    ArrowColor #2C3E50
+    FontSize 12
+}
+skinparam actor {
+    BackgroundColor USER_COLOR
+    BorderColor #2C3E50
+    FontSize 14
+    FontStyle bold
+}
+skinparam package {
+    BackgroundColor RECTANGLE_BGCOLOR
+    BorderColor #3498DB
+    BorderThickness 3
+    FontSize 16
+    FontStyle bold
+}
+
+title 🚀 Hệ Thống Quản Lý Hóa Đơn với AI - Sơ Đồ Use Case\n<size:12>Tính Năng Toàn Diện Của Hệ Thống</size>
+
+' Define Actors
+actor "👤 Khách" as Guest #95E1D3
+actor "🧑‍💼 Người Dùng" as User #4ECDC4
+actor "👨‍💼 Quản Trị Viên" as Admin #FF6B6B
+actor "🤖 Hệ Thống AI\n(Groq LLM)" as AI #FFE66D
+actor "📸 Công Cụ OCR\n(Tesseract)" as OCR #A8E6CF
+
+' System Boundary
+package "Hệ Thống Invoice AI" #E8F4F8 {
+    
+    ' ===== AUTHENTICATION MODULE =====
+    package "🔐 Xác Thực" #FFF3E0 {
+        usecase "Đăng Ký Tài Khoản" as UC_Register
+        usecase "Đăng Nhập" as UC_Login
+        usecase "Đăng Xuất" as UC_Logout
+        usecase "Xem Thông Tin Cá Nhân" as UC_Profile
+        usecase "Làm Mới Token" as UC_RefreshToken
+        usecase "Xác Thực JWT Token" as UC_ValidateToken
+    }
+    
+    ' ===== INVOICE MANAGEMENT MODULE =====
+    package "📋 Quản Lý Hóa Đơn" #E8F5E9 {
+        usecase "Xem Danh Sách Hóa Đơn" as UC_ViewList
+        usecase "Tìm Kiếm Hóa Đơn" as UC_Search
+        usecase "Lọc Hóa Đơn" as UC_Filter
+        usecase "Xem Chi Tiết Hóa Đơn" as UC_ViewDetails
+        usecase "Tạo Hóa Đơn" as UC_Create
+        usecase "Cập Nhật Hóa Đơn" as UC_Update
+        usecase "Xóa Hóa Đơn" as UC_Delete
+        usecase "Xem Thống Kê Hóa Đơn" as UC_Stats
+        
+        usecase "Kiểm Tra Dữ Liệu" as UC_ValidateData
+        usecase "Tạo Mã Hóa Đơn" as UC_GenerateID
+    }
+    
+    ' ===== FILE UPLOAD & OCR MODULE =====
+    package "📤 Tải Lên & Xử Lý OCR" #FCE4EC {
+        usecase "Tải Lên Ảnh Hóa Đơn" as UC_Upload
+        usecase "Xử Lý OCR" as UC_OCR
+        usecase "Trích Xuất Dữ Liệu" as UC_Extract
+        usecase "Xem Ảnh Đã Tải" as UC_ViewImages
+        usecase "Xóa File Đã Tải" as UC_DeleteFile
+        usecase "Xem Trạng Thái OCR" as UC_OCRStatus
+        
+        usecase "Lưu Ảnh Vào DB" as UC_StoreImage
+        usecase "Đưa Vào Hàng Đợi OCR" as UC_QueueOCR
+        usecase "Phân Tích Văn Bản OCR" as UC_ParseOCR
+    }
+    
+    ' ===== AI CHATBOT MODULE =====
+    package "🤖 Chatbot AI & Phân Tích" #F3E5F5 {
+        usecase "Trò Chuyện với AI" as UC_Chat
+        usecase "Phân Tích Hóa Đơn" as UC_Analyze
+        usecase "Lấy Thông Tin Chi Tiết" as UC_Insights
+        usecase "Truy Vấn Dữ Liệu" as UC_QueryData
+        usecase "Nhận Gợi Ý" as UC_Recommend
+        
+        usecase "Xử Lý Truy Vấn NLP" as UC_NLP
+        usecase "Lấy Ngữ Cảnh RAG" as UC_RAG
+        usecase "Tạo Câu Trả Lời AI" as UC_AIResponse
+    }
+    
+    ' ===== EXPORT MODULE =====
+    package "📊 Xuất Dữ Liệu & Báo Cáo" #FFF9C4 {
+        usecase "Xuất Excel" as UC_ExportExcel
+        usecase "Xuất PDF" as UC_ExportPDF
+        usecase "Xuất CSV" as UC_ExportCSV
+        usecase "Xuất JSON" as UC_ExportJSON
+        usecase "Tạo Báo Cáo" as UC_GenerateReport
+        usecase "Xem Tóm Tắt Export" as UC_ExportSummary
+        
+        usecase "Định Dạng Dữ Liệu" as UC_FormatExport
+        usecase "Nén File Export" as UC_CompressFile
+    }
+    
+    ' ===== ADMIN MODULE =====
+    package "👨‍💼 Quản Trị Hệ Thống" #FFEBEE {
+        usecase "Quản Lý Người Dùng" as UC_ManageUsers
+        usecase "Xem Tất Cả User" as UC_ViewUsers
+        usecase "Bật/Tắt Quyền Admin" as UC_ToggleAdmin
+        usecase "Bật/Tắt Trạng Thái User" as UC_ToggleActive
+        usecase "Xóa Người Dùng" as UC_DeleteUser
+        
+        usecase "Xem Tất Cả Hóa Đơn" as UC_AdminInvoices
+        usecase "Xem Tất Cả OCR Jobs" as UC_AdminOCR
+        usecase "Xem Thống Kê Hệ Thống" as UC_SystemStats
+        usecase "Sao Lưu Database" as UC_Backup
+        usecase "Xem Tình Trạng Hệ Thống" as UC_Health
+        
+        usecase "Xác Thực Quyền Admin" as UC_VerifyAdmin
+    }
+    
+    ' ===== IMAGE MANAGEMENT =====
+    package "🖼️ Quản Lý Ảnh" #E1F5FE {
+        usecase "Lấy Ảnh Theo ID" as UC_GetImage
+        usecase "Phục Vụ Ảnh" as UC_ServeImage
+        usecase "Xem Thư Viện Ảnh" as UC_Gallery
+    }
+}
+
+' ===== ACTOR RELATIONSHIPS =====
+
+' Guest User relationships
+Guest --> UC_Register
+Guest --> UC_Login
+
+' User inheritance from Guest
+User --|> Guest
+
+' User relationships - Authentication
+User --> UC_Logout
+User --> UC_Profile
+User --> UC_RefreshToken
+
+' User relationships - Invoice Management
+User --> UC_ViewList
+User --> UC_Search
+User --> UC_Filter
+User --> UC_ViewDetails
+User --> UC_Create
+User --> UC_Update
+User --> UC_Delete
+User --> UC_Stats
+
+' User relationships - Upload & OCR
+User --> UC_Upload
+User --> UC_ViewImages
+User --> UC_DeleteFile
+User --> UC_OCRStatus
+
+' User relationships - AI Chat
+User --> UC_Chat
+User --> UC_Analyze
+User --> UC_Insights
+User --> UC_QueryData
+User --> UC_Recommend
+
+' User relationships - Export
+User --> UC_ExportExcel
+User --> UC_ExportPDF
+User --> UC_ExportCSV
+User --> UC_ExportJSON
+User --> UC_GenerateReport
+User --> UC_ExportSummary
+
+' User relationships - Images
+User --> UC_GetImage
+User --> UC_ServeImage
+User --> UC_Gallery
+
+' Admin inheritance from User
+Admin --|> User
+
+' Admin-specific relationships
+Admin --> UC_ManageUsers
+Admin --> UC_ViewUsers
+Admin --> UC_ToggleAdmin
+Admin --> UC_ToggleActive
+Admin --> UC_DeleteUser
+Admin --> UC_AdminInvoices
+Admin --> UC_AdminOCR
+Admin --> UC_SystemStats
+Admin --> UC_Backup
+Admin --> UC_Health
+
+' AI System relationships
+AI --> UC_NLP
+AI --> UC_RAG
+AI --> UC_AIResponse
+
+' OCR Engine relationships
+OCR --> UC_OCR
+OCR --> UC_Extract
+OCR --> UC_ParseOCR
+
+' ===== INCLUDE RELATIONSHIPS =====
+
+' Authentication includes
+UC_Login ..> UC_ValidateToken : <<include>>
+UC_Profile ..> UC_ValidateToken : <<include>>
+UC_RefreshToken ..> UC_ValidateToken : <<include>>
+
+' Invoice Management includes
+UC_Create ..> UC_ValidateData : <<include>>
+UC_Create ..> UC_GenerateID : <<include>>
+UC_Update ..> UC_ValidateData : <<include>>
+UC_ViewList ..> UC_Search : <<include>>
+UC_ViewList ..> UC_Filter : <<include>>
+
+' Upload & OCR includes
+UC_Upload ..> UC_StoreImage : <<include>>
+UC_Upload ..> UC_QueueOCR : <<include>>
+UC_OCR ..> UC_Extract : <<include>>
+UC_Extract ..> UC_ParseOCR : <<include>>
+
+' AI Chatbot includes
+UC_Chat ..> UC_NLP : <<include>>
+UC_Analyze ..> UC_RAG : <<include>>
+UC_Analyze ..> UC_AIResponse : <<include>>
+UC_QueryData ..> UC_NLP : <<include>>
+UC_QueryData ..> UC_RAG : <<include>>
+
+' Export includes
+UC_ExportExcel ..> UC_FormatExport : <<include>>
+UC_ExportPDF ..> UC_FormatExport : <<include>>
+UC_ExportCSV ..> UC_FormatExport : <<include>>
+UC_ExportJSON ..> UC_FormatExport : <<include>>
+UC_GenerateReport ..> UC_CompressFile : <<include>>
+
+' Admin includes
+UC_ManageUsers ..> UC_VerifyAdmin : <<include>>
+UC_ToggleAdmin ..> UC_VerifyAdmin : <<include>>
+UC_ToggleActive ..> UC_VerifyAdmin : <<include>>
+UC_DeleteUser ..> UC_VerifyAdmin : <<include>>
+UC_AdminInvoices ..> UC_VerifyAdmin : <<include>>
+UC_AdminOCR ..> UC_VerifyAdmin : <<include>>
+UC_SystemStats ..> UC_VerifyAdmin : <<include>>
+
+' ===== EXTEND RELATIONSHIPS =====
+
+' Authentication extends
+UC_Profile ..> UC_Update : <<extend>>
+UC_Login ..> UC_RefreshToken : <<extend>>
+
+' Invoice Management extends
+UC_ViewDetails ..> UC_Update : <<extend>>
+UC_ViewDetails ..> UC_Delete : <<extend>>
+UC_Stats ..> UC_GenerateReport : <<extend>>
+
+' Upload extends
+UC_Upload ..> UC_Create : <<extend>>
+UC_OCRStatus ..> UC_ViewDetails : <<extend>>
+
+' AI Chat extends
+UC_Analyze ..> UC_Insights : <<extend>>
+UC_Chat ..> UC_Recommend : <<extend>>
+UC_QueryData ..> UC_ExportJSON : <<extend>>
+
+' Export extends
+UC_ViewList ..> UC_ExportExcel : <<extend>>
+UC_ViewList ..> UC_ExportPDF : <<extend>>
+UC_ViewList ..> UC_ExportCSV : <<extend>>
+UC_Stats ..> UC_ExportSummary : <<extend>>
+
+' Admin extends
+UC_ViewUsers ..> UC_ToggleAdmin : <<extend>>
+UC_ViewUsers ..> UC_ToggleActive : <<extend>>
+UC_ViewUsers ..> UC_DeleteUser : <<extend>>
+UC_SystemStats ..> UC_Backup : <<extend>>
+
+' External System Communications
+UC_Chat -.-> AI : <<communicate>>
+UC_Analyze -.-> AI : <<communicate>>
+UC_AIResponse -.-> AI : <<communicate>>
+UC_OCR -.-> OCR : <<communicate>>
+UC_Extract -.-> OCR : <<communicate>>
+
+' Notes
+note right of UC_Upload
+  <b>Xử Lý Bất Đồng Bộ:</b>
+  Upload trả về trong 50ms,
+  OCR xử lý ngầm ở background
+end note
+
+note right of UC_Chat
+  <b>Công Nghệ:</b>
+  Groq LLM (llama-3.1-8b)
+  tích hợp RAG
+end note
+
+note right of UC_ManageUsers
+  <b>Chỉ Admin:</b>
+  Yêu cầu quyền admin
+  và xác thực JWT
+end note
+
+note bottom of OCR
+  <b>Công Cụ OCR:</b>
+  Tesseract OCR
+  Hỗ trợ đa ngôn ngữ
+end note
+
+@enduml

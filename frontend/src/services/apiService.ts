@@ -23,13 +23,21 @@ class APIService {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
+    // Auto-add Authorization header if token exists
+    const token = localStorage.getItem('token');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> || {}),
+    };
+    
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     try {
       const response = await fetch(`${this.baseURL}${endpoint}`, {
         ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
+        headers,
         signal: controller.signal,
       });
 
@@ -65,7 +73,7 @@ class APIService {
       password: truncatedPassword
     };
     
-    const response = await this.request<{ access_token: string; token_type: string; user: User }>
+    const response = await this.request<{ access_token: string; token_type: string; user: any }>
       ('/api/auth/register',
       {
         method: 'POST',
@@ -76,8 +84,28 @@ class APIService {
     // Store token
     localStorage.setItem('token', response.access_token);
     
+    // Decode JWT for role (same as login)
+    let jwtRole: string | undefined;
+    let jwtIsAdmin: boolean = false;
+    try {
+      const tokenParts = response.access_token.split('.');
+      const payload = JSON.parse(atob(tokenParts[1]));
+      jwtRole = payload.role;
+      jwtIsAdmin = payload.is_admin || false;
+    } catch (e) {
+      console.error('❌ Failed to decode token in register:', e);
+    }
+    
+    // Map backend user object to frontend User type
+    // Priority: JWT role > response.user role
+    const user: User = {
+      email: response.user.email,
+      name: response.user.name || response.user.email.split('@')[0],
+      role: (jwtRole?.toLowerCase() === 'admin' || jwtIsAdmin || response.user.role?.toLowerCase() === 'admin' || response.user.is_admin) ? 'admin' : 'user'
+    };
+    
     return {
-      user: response.user,
+      user,
       token: response.access_token,
     };
   }
@@ -93,7 +121,7 @@ class APIService {
       password: truncatedPassword
     };
     
-    const response = await this.request<{ access_token: string; token_type: string; user: User }>(
+    const response = await this.request<{ access_token: string; token_type: string; user: any }>(
       '/api/auth/login',
       {
         method: 'POST',
@@ -101,13 +129,48 @@ class APIService {
       }
     );
 
+    // Initialize JWT variables
+    let jwtRole: string | undefined;
+    let jwtIsAdmin: boolean = false;
+
     // Store token in localStorage
     if (response.access_token) {
       localStorage.setItem('token', response.access_token);
+      
+      // Debug: Decode and log JWT token payload
+      try {
+        const tokenParts = response.access_token.split('.');
+        const payload = JSON.parse(atob(tokenParts[1]));
+        jwtRole = payload.role;
+        jwtIsAdmin = payload.is_admin || false;
+        console.log('🔑 JWT Token Payload:', payload);
+      } catch (e) {
+        console.error('❌ Failed to decode token:', e);
+      }
     }
 
-    return {
+    // Debug: Log response
+    console.log('🔍 Login Response:', {
       user: response.user,
+      has_role: response.user.role,
+      has_is_admin: response.user.is_admin,
+      jwt_role: jwtRole,
+      jwt_is_admin: jwtIsAdmin,
+      role_calculated: (jwtRole?.toLowerCase() === 'admin' || jwtIsAdmin || response.user.role?.toLowerCase() === 'admin' || response.user.is_admin) ? 'admin' : 'user'
+    });
+
+    // Map backend user object to frontend User type
+    // Priority: JWT role > response.user role
+    const user: User = {
+      email: response.user.email,
+      name: response.user.name || response.user.email.split('@')[0],
+      role: (jwtRole?.toLowerCase() === 'admin' || jwtIsAdmin || response.user.role?.toLowerCase() === 'admin' || response.user.is_admin) ? 'admin' : 'user'
+    };
+
+    console.log('✅ Final User Object:', user);
+
+    return {
+      user,
       token: response.access_token,
     };
   }
@@ -128,11 +191,41 @@ class APIService {
       throw new Error('No authentication token found');
     }
 
-    return await this.request<User>('/api/auth/me', {
+    const backendUser = await this.request<any>('/api/auth/me', {
       headers: {
         Authorization: `Bearer ${token}`,
       },
     });
+
+    // Decode JWT token to get role
+    let jwtRole: string | undefined;
+    let jwtIsAdmin: boolean = false;
+    try {
+      const tokenParts = token.split('.');
+      const payload = JSON.parse(atob(tokenParts[1]));
+      jwtRole = payload.role;
+      jwtIsAdmin = payload.is_admin || false;
+      console.log('🔑 JWT in getCurrentUser:', { role: jwtRole, is_admin: jwtIsAdmin });
+    } catch (e) {
+      console.error('❌ Failed to decode token in getCurrentUser:', e);
+    }
+
+    console.log('👤 Backend user in getCurrentUser:', {
+      ...backendUser,
+      jwt_role: jwtRole,
+      jwt_is_admin: jwtIsAdmin
+    });
+
+    // Map backend user object to frontend User type
+    // Priority: JWT role > backendUser.role > backendUser.is_admin
+    const user: User = {
+      email: backendUser.email,
+      name: backendUser.name || backendUser.email.split('@')[0],
+      role: (jwtRole?.toLowerCase() === 'admin' || jwtIsAdmin || backendUser.role?.toLowerCase() === 'admin' || backendUser.is_admin) ? 'admin' : 'user'
+    };
+
+    console.log('✅ Final user in getCurrentUser:', user);
+    return user;
   }
 
   /**
@@ -144,13 +237,27 @@ class APIService {
       throw new Error('No authentication token found');
     }
 
-    return await this.request<User>('/api/auth/profile', {
+    const backendUser = await this.request<any>('/api/auth/profile', {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ name, email }),
     });
+
+    // Map backend user object to frontend User type
+    return {
+      email: backendUser.email,
+      name: backendUser.name || backendUser.email.split('@')[0],
+      role: backendUser.is_admin ? 'admin' : 'user'
+    };
+
+    // Map backend user object to frontend User type
+    return {
+      email: backendUser.email,
+      name: backendUser.name || backendUser.email.split('@')[0],
+      role: backendUser.is_admin ? 'admin' : 'user'
+    };
   }
 
   /**
@@ -248,6 +355,128 @@ class APIService {
         ...(token && { Authorization: `Bearer ${token}` }),
       },
       body: JSON.stringify({ message }),
+    });
+  }
+
+  /**
+   * Get all users (Admin only)
+   */
+  async getAllUsers(): Promise<any[]> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    console.log('🔑 Sending request with token:', token.substring(0, 20) + '...');
+    
+    return await this.request('/api/admin/users', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
+
+  /**
+   * Get user statistics (Admin only)
+   */
+  async getUserStatistics(): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/admin/users/statistics', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
+
+  /**
+   * Get invoice statistics (Admin only)
+   */
+  async getInvoiceStatistics(): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/admin/invoices/statistics', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
+
+  /**
+   * Create a new invoice (Admin only)
+   */
+  async createInvoice(invoiceData: any): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/invoices/create', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(invoiceData),
+    });
+  }
+
+  /**
+   * Get recent activities (Admin only)
+   */
+  async getRecentActivities(): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/admin/activities/recent', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
+
+  /**
+   * Get top users (Admin only)
+   */
+  async getTopUsers(): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/admin/users/top', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }
+
+  /**
+   * Get monthly statistics (Admin only)
+   */
+  async getMonthlyStatistics(): Promise<any> {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      throw new Error('No authentication token');
+    }
+    
+    return await this.request('/api/admin/statistics/monthly', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
   }
 

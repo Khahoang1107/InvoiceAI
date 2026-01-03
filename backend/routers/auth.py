@@ -13,23 +13,38 @@ async def get_user_service() -> UserService:
     return UserService()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, user_service: UserService = Depends(get_user_service)):
     """
-    Register new user
+    Register new user and return JWT token (auto-login after registration)
     
     Args:
         user_data: User registration data (email, name, password)
         
     Returns:
-        Created user response
+        User response with JWT access token
     """
     try:
         logger.info(f"User registration attempt: {user_data.email}")
         logger.info(f"Registration data: email={user_data.email}, name={user_data.name}, password_length={len(user_data.password)}")
         user = await user_service.create_user(user_data)
+        
+        # Create JWT token for auto-login with role and is_admin
+        access_token = user_service.create_access_token(
+            user.id, 
+            user_role=user.role if hasattr(user, 'role') else 'user',
+            is_admin=user.is_admin if hasattr(user, 'is_admin') else False
+        )
+        
         logger.info(f"User registered successfully: {user_data.email}")
-        return user
+        
+        # Return same format as login for consistency
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": 1800,  # 30 minutes
+            "user": user
+        }
     except ValueError as e:
         logger.error(f"Validation failed for {user_data.email}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -63,8 +78,17 @@ async def login(credentials: LoginRequest, user_service: UserService = Depends(g
                 detail="Invalid email or password"
             )
         
-        # Create JWT token
-        access_token = user_service.create_access_token(user.id)
+        # Debug log user object
+        logger.info(f"🔍 User object: {user}")
+        logger.info(f"🔍 User has role: {hasattr(user, 'role')}, value: {getattr(user, 'role', None)}")
+        logger.info(f"🔍 User has is_admin: {hasattr(user, 'is_admin')}, value: {getattr(user, 'is_admin', None)}")
+        
+        # Create JWT token with role and is_admin
+        access_token = user_service.create_access_token(
+            user.id,
+            user_role=user.role if hasattr(user, 'role') else 'user',
+            is_admin=user.is_admin if hasattr(user, 'is_admin') else False
+        )
         
         logger.info(f"User logged in successfully: {email}")
         return {
@@ -77,7 +101,7 @@ async def login(credentials: LoginRequest, user_service: UserService = Depends(g
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Login failed for {email}: {str(e)}")
+        logger.error(f"Login failed for {credentials.email}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
@@ -103,7 +127,15 @@ async def refresh_token(refresh_token: str, user_service: UserService = Depends(
                 detail="Invalid refresh token"
             )
         
-        access_token = user_service.create_access_token(user_id)
+        # Get user to include role in new token
+        user = await user_service.get_user_by_id(user_id)
+        
+        # Create new token with role and is_admin
+        access_token = user_service.create_access_token(
+            user_id,
+            user_role=user.role if hasattr(user, 'role') else 'user',
+            is_admin=user.is_admin if hasattr(user, 'is_admin') else False
+        )
         logger.info(f"Token refreshed for user: {user_id}")
         
         return TokenResponse(

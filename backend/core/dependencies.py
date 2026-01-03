@@ -21,6 +21,7 @@ except ImportError:
         DB_POOL_OVERFLOW = 10
         DEBUG = False
         GROQ_API_KEY = None
+        GROQ_MODEL = "llama-3.1-8b-instant"
     settings = DummySettings()
 
 import httpx

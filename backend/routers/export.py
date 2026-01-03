@@ -1,8 +1,9 @@
 # Export API Router
 # Export invoices in various formats (Excel, PDF, CSV, JSON)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,26 @@ from core.logging import logger
 import io
 
 router = APIRouter(prefix="/api/export", tags=["export"])
+
+# Security
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current authenticated user from JWT token"""
+    try:
+        token = credentials.credentials
+        from services.user_service import UserService
+        user_service = UserService()
+        user_id = user_service.verify_token(token)
+        user = await user_service.get_user_by_id(user_id)
+        return user
+    except Exception as e:
+        logger.error(f"Authentication failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # Get services
 def get_db():
@@ -26,6 +47,7 @@ export_service = None
 
 @router.get("/invoices")
 async def export_invoices(
+    current_user = Depends(get_current_user),
     format: str = Query(..., description="Export format: excel, pdf, csv, json"),
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
@@ -35,6 +57,7 @@ async def export_invoices(
 ):
     """
     Export invoices with optional filtering
+    🔒 REQUIRES AUTHENTICATION - Only exports invoices for the authenticated user
 
     Query parameters:
     - format: Required. One of: excel, pdf, csv, json
@@ -52,6 +75,8 @@ async def export_invoices(
         if export_service is None:
             export_service = get_export_service()
         
+        user_id = current_user.id
+        
         # Validate format
         supported_formats = ["excel", "pdf", "csv", "json"]
         if format.lower() not in supported_formats:
@@ -60,9 +85,9 @@ async def export_invoices(
                 detail=f"Unsupported format. Supported: {', '.join(supported_formats)}"
             )
 
-        # Get all invoices
-        logger.info("📊 Fetching invoices for export...")
-        invoices = db.get_all_invoices(limit=10000)  # Large limit for export
+        # Get all invoices (FILTERED BY USER)
+        logger.info(f"📊 Fetching invoices for export (user {user_id})...")
+        invoices = db.get_all_invoices(limit=10000, user_id=user_id)  # Large limit for export
 
         if not invoices:
             raise HTTPException(status_code=404, detail="No invoices found")
@@ -167,6 +192,7 @@ async def export_invoices(
 
 @router.get("/invoices/summary")
 async def get_export_summary(
+    current_user = Depends(get_current_user),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     year: Optional[int] = Query(None),
@@ -175,6 +201,7 @@ async def get_export_summary(
 ):
     """
     Get summary statistics for invoices (without full export)
+    🔒 REQUIRES AUTHENTICATION - Only shows summary for the authenticated user
 
     Returns count, total amount, average confidence, etc.
     """
@@ -186,8 +213,10 @@ async def get_export_summary(
         if export_service is None:
             export_service = get_export_service()
         
-        # Get all invoices
-        invoices = db.get_all_invoices(limit=10000)
+        user_id = current_user.id
+        
+        # Get all invoices (FILTERED BY USER)
+        invoices = db.get_all_invoices(limit=10000, user_id=user_id)
 
         if not invoices:
             return JSONResponse({

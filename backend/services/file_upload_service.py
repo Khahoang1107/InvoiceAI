@@ -181,12 +181,36 @@ class FileUploadService:
                 'updated_at': datetime.utcnow()
             }
             
-            # Save to database using db_tools
-            invoice_id = self.db.save_invoice(db_data)
+            # Save to database using db_tools (FIXED: Pass user_id)
+            invoice_id = self.db.save_invoice(db_data, user_id=user_id)
             
             # Update image with invoice_id reference
             if invoice_id:
                 self.db.update_image_invoice_id(image_id, invoice_id)
+            
+            # 🔥 NEW: Store in vector database for RAG semantic search
+            try:
+                from services.vector_store import get_vector_store
+                vector_store = get_vector_store()
+                
+                # Prepare invoice data for vector storage
+                vector_data = {
+                    'invoice_number': db_data['invoice_code'],
+                    'client_name': db_data['buyer_name'],
+                    'vendor_name': db_data['seller_name'],
+                    'amount': db_data['total_amount_value'],
+                    'date': db_data['date'],
+                    'status': 'active',
+                    'description': db_data.get('ocr_text', '')[:500]  # First 500 chars
+                }
+                
+                # Store async (non-blocking)
+                import asyncio
+                asyncio.create_task(vector_store.store_invoice(invoice_id, vector_data))
+                logger.info(f"✅ Invoice {invoice_id} queued for vector storage")
+            except Exception as ve:
+                # Don't fail invoice save if vector storage fails
+                logger.warning(f"Vector storage failed (non-critical): {ve}")
             
             return invoice_id
             

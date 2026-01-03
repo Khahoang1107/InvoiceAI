@@ -155,7 +155,17 @@ try:
 
     # Initialize services
     ocr_service = OCRService(db_tools)
-    invoice_service = InvoiceService(db_tools)
+    
+    # Import vector service for RAG
+    try:
+        from services.vector_store import get_vector_service
+        vector_service = get_vector_service()
+        logger.info("✅ Vector service initialized for RAG")
+    except Exception as ve:
+        logger.warning(f"⚠️ Vector service not available: {ve}")
+        vector_service = None
+    
+    invoice_service = InvoiceService(db_tools, vector_service=vector_service, ocr_service=ocr_service)
     ai_training_service = AITrainingService(db_tools)
     ocr_job_service = OCRJobService(db_tools)
 
@@ -176,21 +186,31 @@ except Exception as e:
     logger.warning(f"⚠️ Export service not available: {e}")
     export_service = None
 
-# Import auth API router (use simple mock version for now)
+# Import auth API router (use database version)
 try:
-    from routers.simple_auth import router as auth_router
-    logger.info("✅ Simple Auth API router initialized")
+    from auth_api import auth_router
+    logger.info("✅ Auth API router initialized (database version)")
 except Exception as e:
-    logger.warning(f"⚠️ Auth API router not available: {e}")
-    auth_router = None
+    logger.warning(f"⚠️ Auth API router not available, trying simple auth: {e}")
+    try:
+        from routers.simple_auth import router as auth_router
+        logger.info("✅ Simple Auth API router initialized (fallback)")
+    except Exception as e2:
+        logger.warning(f"⚠️ No auth router available: {e2}")
+        auth_router = None
 
 # Import admin API router
 try:
-    from routers.admin import router as admin_router
-    logger.info("✅ Admin API router initialized")
+    from admin_api import admin_router
+    logger.info("✅ Admin API router initialized from admin_api.py")
 except Exception as e:
-    logger.warning(f"⚠️ Admin API router not available: {e}")
-    admin_router = None
+    logger.warning(f"⚠️ Admin API router not available from admin_api.py, trying routers/admin.py: {e}")
+    try:
+        from routers.admin import router as admin_router
+        logger.info("✅ Admin API router initialized from routers/admin.py")
+    except Exception as e2:
+        logger.warning(f"⚠️ Admin API router not available: {e2}")
+        admin_router = None
 
 # Import chat router
 try:
@@ -218,6 +238,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ensure auth utilities exist (fallback if import failed)
+if not get_current_user:
+    logger.warning("⚠️ Creating fallback auth utilities")
+    from utils.auth_utils import get_current_user as _get_current_user
+    get_current_user = _get_current_user
+    logger.info("✅ Fallback auth utilities loaded")
+
 # Mount static files for uploads
 from fastapi.staticfiles import StaticFiles
 upload_dir = "uploads"
@@ -232,12 +259,12 @@ if auth_router:
 
 # Include admin router
 if admin_router:
-    app.include_router(admin_router)
+    app.include_router(admin_router, prefix="/api")
     logger.info("✅ Admin router included at /api/admin")
 
-# Include chat router
+# Include chat router (already has /api/chat prefix in router definition)
 if chat_router:
-    app.include_router(chat_router, prefix="/api")
+    app.include_router(chat_router)
     logger.info("✅ Chat router included at /api/chat")
 
 # ===================== MODELS =====================
@@ -1162,13 +1189,18 @@ async def get_invoice_list(request: InvoiceListRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/invoices")
+@app.get("/api/invoices/")  # Support both with and without trailing slash
 async def get_invoices(
     time_filter: str = "all",
     limit: int = 20,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    current_user = Depends(get_current_user)
 ):
-    """Get all invoices - Standard REST endpoint"""
+    """Get all invoices - Standard REST endpoint (requires authentication)"""
     try:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+            
         if not invoice_service:
             raise HTTPException(status_code=500, detail="Invoice service not available")
 
@@ -1183,6 +1215,8 @@ async def get_invoices(
             "timestamp": datetime.now().isoformat()
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Invoice list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1271,7 +1305,8 @@ async def get_invoice_statistics():
 
 # ===================== UPLOAD ENDPOINT =====================
 
-@app.post("/api/upload")
+@app.post("/api/upload", include_in_schema=True)
+@app.post("/api/upload/", include_in_schema=False)
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload file and process invoice OCR
@@ -1290,15 +1325,15 @@ async def upload_file(file: UploadFile = File(...)):
         
         logger.info(f"✅ File uploaded, processing OCR: {file.filename}")
         
-        # Check if Tesseract is available
-        if not TESSERACT_AVAILABLE:
-            logger.warning("⚠️ Tesseract not available, returning mock data")
+        # Check if OCR service is available
+        if not ocr_service:
+            logger.error("⚠️ OCR service not available")
             invoice = {
-                "invoice_code": f"MOCK-{file.filename[:8]}",
+                "invoice_code": f"ERR-{file.filename[:8]}",
                 "date": datetime.now().strftime("%Y-%m-%d"),
                 "invoice_type": "general",
-                "seller_name": "⚠️ Tesseract chưa cài đặt",
-                "seller_address": "Cần cài pytesseract",
+                "seller_name": "⚠️ OCR service không khả dụng",
+                "seller_address": "Lỗi hệ thống",
                 "seller_tax_id": "",
                 "buyer_name": "",
                 "buyer_address": "",
@@ -1317,14 +1352,20 @@ async def upload_file(file: UploadFile = File(...)):
                 "filepath": file_path,
                 "invoice": invoice,
                 "ocr_text": "",
-                "message": "Tesseract not installed",
-                "error": "Run: pip install pytesseract pillow opencv-python"
+                "message": "OCR service not available",
+                "error": "OCR service initialization failed"
             }
         
-        # Perform OCR
+        # Perform OCR using Tesseract wrapper directly
         try:
+            logger.info(f"🔄 Processing OCR for file: {file_path}")
+            
+            # Use tesseract wrapper (Python 3.14 compatible)
+            from utils.tesseract_wrapper import image_to_string
+            from PIL import Image
+            
             image = Image.open(file_path)
-            ocr_text = pytesseract.image_to_string(image, lang='vie+eng')
+            ocr_text = image_to_string(image, lang='vie+eng')
             logger.info(f"📄 OCR completed: {len(ocr_text)} characters")
             
             # Extract invoice data from OCR text using OCRService
@@ -1362,6 +1403,7 @@ async def upload_file(file: UploadFile = File(...)):
             # Save to database
             if db_tools:
                 invoice_db_data = {
+                    "user_id": 1,  # Default user ID for anonymous uploads
                     "filename": file.filename,
                     "filepath": file_path,
                     "invoice_code": invoice['invoice_code'],
@@ -1388,6 +1430,34 @@ async def upload_file(file: UploadFile = File(...)):
                     logger.info(f"💾 Invoice saved to database with ID: {invoice_id}")
                 else:
                     logger.warning("⚠️ Failed to save invoice to database")
+            
+            # RAG Processing: Index invoice for semantic search
+            rag_indexed = False
+            rag_error = None
+            if invoice_service:
+                try:
+                    logger.info(f"🔄 Starting RAG indexing for file: {file.filename}")
+                    rag_result = invoice_service.process_invoice_file(
+                        file_path=file_path,
+                        filename=file.filename,
+                        user_id="system"  # Default user since no auth in this endpoint
+                    )
+                    
+                    if rag_result.get("success"):
+                        rag_indexed = True
+                        logger.info(f"✅ RAG indexing completed for {file.filename}")
+                        invoice["document_id"] = rag_result.get("document_id")
+                    else:
+                        rag_error = rag_result.get("error")
+                        logger.warning(f"⚠️ RAG indexing failed: {rag_error}")
+                        
+                except Exception as rag_ex:
+                    rag_error = str(rag_ex)
+                    logger.warning(f"⚠️ RAG processing failed: {rag_error}")
+            
+            invoice["rag_indexed"] = rag_indexed
+            if rag_error:
+                invoice["rag_error"] = rag_error
             
             return {
                 "success": True,

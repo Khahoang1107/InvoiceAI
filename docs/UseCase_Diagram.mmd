@@ -1,0 +1,122 @@
+```mermaid
+graph TB
+    %% Define Actors
+    User([👤 User<br/>Người dùng])
+    Admin([👤 Admin<br/>Quản trị viên])
+    System([⚙️ System<br/>Hệ thống])
+    
+    %% Authentication Use Cases
+    subgraph Auth["🔐 Authentication"]
+        UC1[Đăng ký tài khoản]
+        UC2[Đăng nhập]
+        UC3[Đăng xuất]
+        UC4[Quên mật khẩu]
+    end
+    
+    %% Invoice Management
+    subgraph Invoice["📄 Invoice Management"]
+        UC5[Upload hóa đơn]
+        UC6[Xem danh sách hóa đơn]
+        UC7[Xem chi tiết hóa đơn]
+        UC8[Xóa hóa đơn]
+        UC9[Tải xuống hóa đơn]
+        UC10[Export báo cáo Excel]
+    end
+    
+    %% OCR Processing
+    subgraph OCR["🔍 OCR Processing"]
+        UC11[Xử lý OCR tự động]
+        UC12[Tiền xử lý hình ảnh]
+        UC13[Trích xuất văn bản<br/>Tesseract/EasyOCR]
+        UC14[Nhận diện thực thể<br/>NER]
+        UC15[Xác thực dữ liệu]
+    end
+    
+    %% AI Chatbot
+    subgraph Chat["🤖 AI Chatbot"]
+        UC16[Truy vấn hóa đơn]
+        UC17[Thống kê theo thời gian]
+        UC18[Tìm kiếm theo điều kiện]
+        UC19[Tính toán tổng tiền]
+        UC20[So sánh hóa đơn]
+    end
+    
+    %% Admin Management
+    subgraph AdminPanel["👨‍💼 Admin Management"]
+        UC21[Quản lý người dùng]
+        UC22[Xem thống kê hệ thống]
+        UC23[Quản lý OCR jobs]
+        UC24[Xóa dữ liệu]
+        UC25[Xuất log hệ thống]
+    end
+    
+    %% System Processing
+    subgraph SysProcess["⚙️ System Processing"]
+        UC26[Lưu trữ database]
+        UC27[Vector indexing<br/>Pinecone]
+        UC28[Background job]
+        UC29[Email notification]
+    end
+    
+    %% User connections
+    User --> UC1
+    User --> UC2
+    User --> UC3
+    User --> UC4
+    User --> UC5
+    User --> UC6
+    User --> UC7
+    User --> UC8
+    User --> UC9
+    User --> UC10
+    User --> UC16
+    User --> UC17
+    User --> UC18
+    User --> UC19
+    User --> UC20
+    
+    %% Admin connections
+    Admin --> UC21
+    Admin --> UC22
+    Admin --> UC23
+    Admin --> UC24
+    Admin --> UC25
+    Admin -.extends.-> User
+    
+    %% System connections
+    System --> UC11
+    System --> UC12
+    System --> UC13
+    System --> UC14
+    System --> UC15
+    System --> UC26
+    System --> UC27
+    System --> UC28
+    System --> UC29
+    
+    %% Include relationships
+    UC5 -.include.-> UC11
+    UC11 -.include.-> UC12
+    UC11 -.include.-> UC13
+    UC11 -.include.-> UC14
+    UC11 -.include.-> UC15
+    UC11 -.include.-> UC26
+    UC11 -.include.-> UC27
+    
+    UC16 -.include.-> UC27
+    UC17 -.include.-> UC27
+    UC18 -.include.-> UC27
+    
+    %% Extend relationships
+    UC10 -.extend.-> UC6
+    UC20 -.extend.-> UC16
+    
+    %% Styling
+    classDef userClass fill:#90caf9,stroke:#1976d2,stroke-width:2px
+    classDef adminClass fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px
+    classDef systemClass fill:#a5d6a7,stroke:#388e3c,stroke-width:2px
+    
+    class User userClass
+    class Admin adminClass
+    class System systemClass
+```

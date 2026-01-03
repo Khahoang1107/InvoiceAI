@@ -106,7 +106,12 @@ class ExportService:
     
     @staticmethod
     def export_to_csv(invoices: List[Dict]) -> str:
-        """Xuất hóa đơn ra CSV"""
+        """
+        Xuất hóa đơn ra CSV với format tối ưu cho Excel
+        - BOM UTF-8 để Excel nhận diện encoding
+        - Semicolon delimiter cho Excel Việt Nam
+        - QUOTE_ALL để tránh lỗi với giá trị có dấu phẩy
+        """
         try:
             output = io.StringIO()
             
@@ -117,16 +122,27 @@ class ExportService:
             # Get field names từ first invoice
             fieldnames = list(invoices[0].keys())
             
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            # Sử dụng semicolon delimiter và quote all fields
+            writer = csv.DictWriter(
+                output, 
+                fieldnames=fieldnames,
+                delimiter=';',  # Excel Việt Nam/châu Âu dùng semicolon
+                quoting=csv.QUOTE_ALL,  # Quote tất cả để tránh lỗi format
+                lineterminator='\n'
+            )
             writer.writeheader()
             
             for inv in invoices:
                 writer.writerow(inv)
             
             csv_content = output.getvalue()
-            logger.info(f"✅ Exported {len(invoices)} invoices to CSV ({len(csv_content)} bytes)")
             
-            return csv_content
+            # Thêm BOM UTF-8 để Excel tự động detect encoding
+            csv_with_bom = '\ufeff' + csv_content
+            
+            logger.info(f"✅ Exported {len(invoices)} invoices to CSV ({len(csv_with_bom)} bytes)")
+            
+            return csv_with_bom
         
         except Exception as e:
             logger.error(f"❌ CSV export error: {e}")

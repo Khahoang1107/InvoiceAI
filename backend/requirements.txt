@@ -20,11 +20,12 @@ websockets==12.0
 psycopg2-binary==2.9.11
 sqlalchemy==2.0.23
 # RAG dependencies
-# chromadb==0.4.18
+chromadb==0.4.18
 sentence-transformers==2.2.2
+faiss-cpu==1.8.0
+openai==1.3.0
 langchain==0.1.0
 langchain-community==0.0.13
-faiss-cpu==1.8.0
 # Testing dependencies
 pytest==7.4.3
 pytest-cov==4.1.0

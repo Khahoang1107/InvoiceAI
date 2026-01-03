@@ -1,0 +1,3 @@
+# Python version for Railway deployment
+# Railway will use Python 3.11 by default, but we can specify if needed
+python-3.11

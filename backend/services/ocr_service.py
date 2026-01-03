@@ -5,11 +5,25 @@ import re
 import json
 import tempfile
 import os
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional
 from PIL import Image
+from pathlib import Path
 
 from utils.logger import get_logger
+
+# Import custom tesseract wrapper (Python 3.14 compatible)
+try:
+    from utils.tesseract_wrapper import (
+        get_tesseract, 
+        image_to_string, 
+        image_to_data,
+        get_tesseract_version as tesseract_version
+    )
+    TESSERACT_WRAPPER_AVAILABLE = True
+except ImportError:
+    TESSERACT_WRAPPER_AVAILABLE = False
 
 logger = get_logger(__name__)
 
@@ -17,8 +31,495 @@ logger = get_logger(__name__)
 class OCRService:
     """Service for handling OCR operations and invoice field extraction"""
 
-    def __init__(self, db_tools=None):
+    def __init__(self, db_tools=None, default_engine: str = "tesseract"):
+        """
+        Initialize OCR Service
+
+        Args:
+            db_tools: Database tools (optional)
+            default_engine: Default OCR engine ('tesseract' or 'easyocr')
+        """
         self.db_tools = db_tools
+        self.default_engine = default_engine
+        self.tesseract_available = self._check_tesseract()
+        self.easyocr_available = self._check_easyocr()
+        
+        # Initialize NER service for better entity extraction
+        # Now enabled with Python 3.12
+        try:
+            from services.ner_service import get_ner_service
+            self.ner_service = get_ner_service()
+            self.ner_available = True
+            logger.info("✅ NER service initialized - will use trained model for entity extraction")
+        except Exception as e:
+            logger.warning(f"NER service not available: {e}")
+            self.ner_service = None
+            self.ner_available = False
+
+        logger.info(f"OCR Service initialized with default engine: {default_engine}")
+        logger.info(f"Tesseract available: {self.tesseract_available}")
+        logger.info(f"EasyOCR available: {self.easyocr_available}")
+        logger.info(f"NER available: {self.ner_available}")
+
+    def _check_tesseract(self) -> bool:
+        """Check if Tesseract is available"""
+        # First try custom wrapper (Python 3.14 compatible)
+        if TESSERACT_WRAPPER_AVAILABLE:
+            try:
+                tesseract_version()
+                return True
+            except:
+                pass
+        
+        # Fallback to pytesseract
+        try:
+            import pytesseract
+            pytesseract.get_tesseract_version()
+            return True
+        except:
+            return False
+
+    def _check_easyocr(self) -> bool:
+        """Check if EasyOCR is available"""
+        try:
+            # Don't actually import easyocr during init to avoid crashes
+            # Just return False if there are known compatibility issues
+            import importlib.util
+            spec = importlib.util.find_spec("easyocr")
+            if spec is None:
+                logger.info("EasyOCR not installed")
+                return False
+            
+            # For now, disable EasyOCR due to NumPy compatibility issues
+            logger.warning("EasyOCR disabled due to NumPy compatibility issues")
+            return False
+        except Exception as e:
+            logger.warning(f"EasyOCR check failed: {e}")
+            return False
+
+    def _preprocess_image(self, image: Image.Image) -> Image.Image:
+        """
+        Preprocess image to improve OCR quality
+
+        Args:
+            image: PIL Image object
+
+        Returns:
+            Preprocessed PIL Image
+        """
+        try:
+            import cv2
+            import numpy as np
+
+            # Convert PIL to OpenCV format
+            opencv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+            # Convert to grayscale
+            gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
+
+            # Apply Gaussian blur to reduce noise
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+            # Apply adaptive thresholding for better contrast
+            thresh = cv2.adaptiveThreshold(
+                blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+            )
+
+            # Convert back to PIL Image
+            processed_image = Image.fromarray(thresh)
+
+            return processed_image
+
+        except ImportError:
+            logger.warning("OpenCV not available, skipping image preprocessing")
+            return image
+        except Exception as e:
+            logger.warning(f"Image preprocessing failed: {e}")
+            return image
+
+    def compare_engines(self, image_path: str) -> Dict[str, Any]:
+        """
+        Compare OCR results from both Tesseract and EasyOCR engines
+
+        Args:
+            image_path: Path to the image file
+
+        Returns:
+            Dictionary containing comparison results
+        """
+        results = {
+            "tesseract": {"available": False, "text": "", "confidence": 0.0, "time": 0.0},
+            "easyocr": {"available": False, "text": "", "confidence": 0.0, "time": 0.0},
+            "recommendation": ""
+        }
+
+        try:
+            # Load and preprocess image
+            image = Image.open(image_path)
+            processed_image = self._preprocess_image(image)
+
+            # Test Tesseract
+            if self.tesseract_available:
+                start_time = time.time()
+                tess_result = self._extract_with_tesseract(processed_image)
+                tess_time = time.time() - start_time
+
+                results["tesseract"] = {
+                    "available": True,
+                    "text": tess_result.get("text", ""),
+                    "confidence": tess_result.get("confidence", 0.0),
+                    "time": tess_time
+                }
+
+            # Test EasyOCR
+            if self.easyocr_available:
+                start_time = time.time()
+                easy_result = self._extract_with_easyocr(processed_image)
+                easy_time = time.time() - start_time
+
+                results["easyocr"] = {
+                    "available": True,
+                    "text": easy_result.get("text", ""),
+                    "confidence": easy_result.get("confidence", 0.0),
+                    "time": easy_time
+                }
+
+            # Make recommendation
+            tess_conf = results["tesseract"]["confidence"]
+            easy_conf = results["easyocr"]["confidence"]
+
+            if tess_conf > easy_conf:
+                results["recommendation"] = "tesseract"
+            elif easy_conf > tess_conf:
+                results["recommendation"] = "easyocr"
+            else:
+                # If confidence is equal, prefer faster engine
+                tess_time = results["tesseract"]["time"]
+                easy_time = results["easyocr"]["time"]
+                results["recommendation"] = "tesseract" if tess_time <= easy_time else "easyocr"
+
+        except Exception as e:
+            logger.error(f"Engine comparison failed: {e}")
+            results["error"] = str(e)
+
+        return results
+
+    def process_file(self, file_path: str, engine: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Process a file with OCR using specified or default engine
+
+        Args:
+            file_path: Path to the file to process
+            engine: OCR engine to use ('tesseract', 'easyocr', or 'auto')
+
+        Returns:
+            Dictionary containing OCR results
+        """
+        try:
+            # Validate file exists
+            if not Path(file_path).exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+            # Load image
+            image = Image.open(file_path)
+            processed_image = self._preprocess_image(image)
+
+            # Determine which engine to use
+            if engine == "auto" or engine is None:
+                # Use comparison to determine best engine
+                comparison = self.compare_engines(file_path)
+                recommended = comparison.get("recommendation", self.default_engine)
+                engine = recommended if recommended in ["tesseract", "easyocr"] else self.default_engine
+
+            # Extract text with selected engine
+            if engine == "tesseract":
+                if not self.tesseract_available:
+                    raise ValueError("Tesseract is not available")
+                result = self._extract_with_tesseract(processed_image)
+            elif engine == "easyocr":
+                if not self.easyocr_available:
+                    raise ValueError("EasyOCR is not available")
+                result = self._extract_with_easyocr(processed_image)
+            else:
+                raise ValueError(f"Unsupported engine: {engine}")
+
+            result["engine_used"] = engine
+            result["processed_at"] = datetime.now().isoformat()
+
+            logger.info(f"OCR processing completed with {engine} engine")
+            return result
+
+        except Exception as e:
+            logger.error(f"OCR processing failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "text": "",
+                "confidence": 0.0,
+                "engine_used": engine or self.default_engine
+            }
+
+    def process_file_dual(self, file_path: str) -> Dict[str, Any]:
+        """
+        Process file with both OCR engines in parallel for comparison
+
+        Args:
+            file_path: Path to the file to process
+
+        Returns:
+            Dictionary containing results from both engines
+        """
+        try:
+            # Validate file exists
+            if not Path(file_path).exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+            logger.info(f"🔍 Starting dual OCR processing for file: {Path(file_path).name}")
+
+            # Load and preprocess image
+            image = Image.open(file_path)
+            processed_image = self._preprocess_image(image)
+
+            results = {
+                "tesseract": {"available": False, "text": "", "confidence": 0.0, "time": 0.0},
+                "easyocr": {"available": False, "text": "", "confidence": 0.0, "time": 0.0},
+                "recommendation": "",
+                "processed_at": datetime.now().isoformat()
+            }
+
+            # Process with Tesseract
+            if self.tesseract_available:
+                try:
+                    start_time = time.time()
+                    tess_result = self._extract_with_tesseract(processed_image)
+                    tess_time = time.time() - start_time
+
+                    results["tesseract"] = {
+                        "available": True,
+                        "text": tess_result.get("text", ""),
+                        "confidence": tess_result.get("confidence", 0.0),
+                        "time": round(tess_time, 3)
+                    }
+                    logger.info(f"✅ Tesseract completed in {tess_time:.3f}s")
+                except Exception as e:
+                    logger.warning(f"Tesseract processing failed: {e}")
+                    results["tesseract"]["error"] = str(e)
+
+            # Process with EasyOCR
+            if self.easyocr_available:
+                try:
+                    start_time = time.time()
+                    easy_result = self._extract_with_easyocr(processed_image)
+                    easy_time = time.time() - start_time
+
+                    results["easyocr"] = {
+                        "available": True,
+                        "text": easy_result.get("text", ""),
+                        "confidence": easy_result.get("confidence", 0.0),
+                        "time": round(easy_time, 3)
+                    }
+                    logger.info(f"✅ EasyOCR completed in {easy_time:.3f}s")
+                except Exception as e:
+                    logger.warning(f"EasyOCR processing failed: {e}")
+                    results["easyocr"]["error"] = str(e)
+
+            # Make recommendation based on available results
+            tess_conf = results["tesseract"].get("confidence", 0)
+            easy_conf = results["easyocr"].get("confidence", 0)
+
+            if tess_conf > easy_conf:
+                results["recommendation"] = "tesseract"
+            elif easy_conf > tess_conf:
+                results["recommendation"] = "easyocr"
+            else:
+                # If confidence equal, prefer faster engine
+                tess_time = results["tesseract"].get("time", float('inf'))
+                easy_time = results["easyocr"].get("time", float('inf'))
+                results["recommendation"] = "tesseract" if tess_time <= easy_time else "easyocr"
+
+            logger.info(f"🔄 Dual OCR processing completed. Recommendation: {results['recommendation']}")
+            return results
+
+        except Exception as e:
+            logger.error(f"Dual OCR processing failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "tesseract": {"available": False},
+                "easyocr": {"available": False},
+                "recommendation": ""
+            }
+
+    def process_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Process file with OCR to extract raw text
+
+        Args:
+            file_path: Path to the file to process
+
+        Returns:
+            Dict containing OCR results with text and metadata
+        """
+        try:
+            file_path_obj = Path(file_path)
+
+            if not file_path_obj.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+
+            logger.info(f"🔍 Starting OCR processing for file: {file_path_obj.name}")
+
+            # Check file type
+            if file_path_obj.suffix.lower() in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']:
+                # Image file - use Tesseract OCR
+                extracted_text = self._perform_ocr_on_image(str(file_path_obj))
+            elif file_path_obj.suffix.lower() == '.pdf':
+                # PDF file - extract text or convert to images first
+                extracted_text = self._process_pdf_file(str(file_path_obj))
+            else:
+                # Try to read as text file
+                try:
+                    with open(file_path_obj, 'r', encoding='utf-8') as f:
+                        extracted_text = f.read()
+                    logger.info(f"✅ Read text file directly: {len(extracted_text)} characters")
+                except UnicodeDecodeError:
+                    raise ValueError(f"Unsupported file type: {file_path_obj.suffix}")
+
+            # Get file metadata
+            file_size = file_path_obj.stat().st_size
+            file_type = file_path_obj.suffix.lower()
+
+            result = {
+                "success": True,
+                "text": extracted_text,
+                "file_path": str(file_path_obj),
+                "file_name": file_path_obj.name,
+                "file_size": file_size,
+                "file_type": file_type,
+                "text_length": len(extracted_text),
+                "processing_timestamp": datetime.now().isoformat()
+            }
+
+            logger.info(f"✅ OCR processing completed: {len(extracted_text)} characters extracted")
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ OCR processing failed for {file_path}: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "file_path": file_path,
+                "text": "",
+                "text_length": 0
+            }
+
+    def _perform_ocr_on_image(self, image_path: str) -> str:
+        """
+        Perform OCR on image file using Tesseract
+
+        Args:
+            image_path: Path to image file
+
+        Returns:
+            Extracted text from image
+        """
+        try:
+            # Try custom wrapper first (Python 3.14 compatible)
+            if TESSERACT_WRAPPER_AVAILABLE:
+                tess = get_tesseract()
+                text = tess.image_to_string_from_path(image_path, lang='eng')
+                logger.info(f"✅ Tesseract wrapper OCR completed: {len(text)} characters")
+                return text
+            
+            # Fallback to pytesseract
+            import pytesseract
+
+            # Configure Tesseract path if needed
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+            # Open image
+            image = Image.open(image_path)
+
+            # Perform OCR with Vietnamese language support
+            text = pytesseract.image_to_string(image, lang='vie+eng')
+
+            logger.info(f"✅ Tesseract OCR completed: {len(text)} characters")
+            return text
+
+        except ImportError:
+            logger.warning("⚠️ Tesseract not available, returning placeholder text")
+            return "OCR not available - Tesseract not installed"
+        except Exception as e:
+            logger.error(f"❌ Tesseract OCR failed: {str(e)}")
+            return f"OCR failed: {str(e)}"
+
+    def _process_pdf_file(self, pdf_path: str) -> str:
+        """
+        Process PDF file - extract text or convert to images
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            Extracted text from PDF
+        """
+        try:
+            # Try to extract text directly from PDF first
+            import fitz  # PyMuPDF
+
+            doc = fitz.open(pdf_path)
+            text = ""
+
+            for page in doc:
+                text += page.get_text()
+
+            doc.close()
+
+            if text.strip():
+                logger.info(f"✅ PDF text extraction completed: {len(text)} characters")
+                return text
+            else:
+                # If no text found, try OCR on images
+                logger.info("📄 PDF has no extractable text, trying OCR on images...")
+                return self._ocr_pdf_images(pdf_path)
+
+        except ImportError:
+            logger.warning("⚠️ PyMuPDF not available, trying OCR on PDF images")
+            return self._ocr_pdf_images(pdf_path)
+        except Exception as e:
+            logger.error(f"❌ PDF processing failed: {str(e)}")
+            return f"PDF processing failed: {str(e)}"
+
+    def _ocr_pdf_images(self, pdf_path: str) -> str:
+        """
+        Convert PDF pages to images and perform OCR
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            OCR text from PDF images
+        """
+        try:
+            from pdf2image import convert_from_path
+            import pytesseract
+
+            # Convert PDF to images
+            images = convert_from_path(pdf_path)
+
+            text = ""
+            for i, image in enumerate(images):
+                page_text = pytesseract.image_to_string(image, lang='vie+eng')
+                text += f"\n--- Page {i+1} ---\n{page_text}"
+
+            logger.info(f"✅ PDF OCR completed: {len(images)} pages, {len(text)} characters")
+            return text
+
+        except ImportError:
+            logger.warning("⚠️ pdf2image not available for PDF OCR")
+            return "PDF OCR not available - pdf2image not installed"
+        except Exception as e:
+            logger.error(f"❌ PDF OCR failed: {str(e)}")
+            return f"PDF OCR failed: {str(e)}"
 
     def extract_invoice_fields(self, ocr_text: str, filename: str = "") -> dict:
         """
@@ -32,6 +533,24 @@ class OCRService:
             logger.warning(f"⚠️ OCR extraction failed for {filename}, using fallback invoice data")
             return self._get_fallback_invoice_data(filename)
 
+        # ✨ NEW: Try NER-based extraction first if available
+        if self.ner_available and self.ner_service:
+            try:
+                logger.info("🤖 Using trained NER model for entity extraction...")
+                ner_result = self.ner_service.extract_entities(ocr_text)
+                
+                if ner_result and ner_result.get("entity_count", 0) > 0:
+                    logger.info(f"✅ NER extracted {ner_result['entity_count']} entities")
+                    # Use NER results to improve extraction accuracy
+                    extracted_info = self.ner_service._extract_invoice_info(ocr_text, ner_result.get("entities", {}))
+                    logger.info(f"📋 NER extracted info: {extracted_info}")
+                else:
+                    extracted_info = None
+            except Exception as e:
+                logger.warning(f"NER extraction failed, falling back to pattern matching: {e}")
+                extracted_info = None
+        else:
+            extracted_info = None
 
         data = {
             'invoice_code': 'INV-UNKNOWN',
@@ -56,6 +575,24 @@ class OCRService:
             'due_date': None,
             'invoice_type': 'general'
         }
+        
+        # Apply NER extracted info if available
+        if extracted_info:
+            if extracted_info.get('invoice_number'):
+                data['invoice_code'] = extracted_info['invoice_number']
+            if extracted_info.get('date'):
+                data['date'] = extracted_info['date']
+            if extracted_info.get('company'):
+                # Improve seller/buyer detection
+                if 'seller' in ocr_text.lower() or 'from' in ocr_text.lower():
+                    data['seller_name'] = extracted_info['company']
+                else:
+                    data['buyer_name'] = extracted_info['company']
+            if extracted_info.get('address'):
+                data['seller_address'] = extracted_info['address']
+            if extracted_info.get('total_amount'):
+                # NER might have better amount detection
+                data['total_amount'] = extracted_info['total_amount']
 
         text_lower = ocr_text.lower()
 
