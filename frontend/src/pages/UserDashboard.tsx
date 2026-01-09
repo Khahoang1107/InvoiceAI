@@ -131,8 +131,8 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       const token = localStorage.getItem('token');
       
       if (action.includes('Xem danh sách')) {
-        // Call invoices API
-        const response = await fetch('/api/invoices', {
+        // Call invoices API with trailing slash to avoid redirect
+        const response = await fetch('/api/invoices/', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         
@@ -179,11 +179,12 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
           throw new Error('Failed to fetch invoices');
         }
       } else if (action.includes('Tìm kiếm')) {
+        // Chỉ hiện prompt, không gọi API ngay
         setIsTyping(false);
-        addBotMessage('🔍 **Tìm kiếm hóa đơn**\n\nVui lòng nhập mã hóa đơn bạn muốn tìm (ví dụ: INV-12345)');
+        addBotMessage('🔍 **Tìm kiếm hóa đơn**\n\nVui lòng nhập thông tin bạn muốn tìm:\n\n• Mã hóa đơn: "INV-001"\n• Tên công ty: "Công ty ABC"\n• Theo ngày: "hóa đơn ngày 14/10"');
       } else if (action.includes('Lọc theo ngày')) {
         setIsTyping(false);
-        addBotMessage('📅 **Lọc hóa đơn theo ngày**\n\nVui lòng nhập khoảng thời gian (ví dụ: "hóa đơn trong tháng 11" hoặc "từ 01/11 đến 30/11")');
+        addBotMessage('📅 **Lọc hóa đơn theo ngày**\n\nVui lòng nhập khoảng thời gian:\n\n• "hóa đơn hôm nay"\n• "hóa đơn tuần này"\n• "hóa đơn tháng 11"\n• "hóa đơn ngày 08/01"');
       } else if (action.includes('Xuất báo cáo')) {
         setIsTyping(false);
         addBotMessage('📊 **Xuất báo cáo hóa đơn**\n\n🎯 Chuyển đến trang quản lý hóa đơn để:\n\n• ✅ Xem tất cả hóa đơn dạng bảng\n• 🔍 Tìm kiếm và lọc theo ngày/loại\n• 📥 Xuất Excel hoặc PDF\n• ✏️ Chỉnh sửa và xóa hóa đơn\n\n💡 Đang chuyển trang...');
@@ -228,10 +229,19 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       return true;
     }
     
-    // Filter by date command
+    // Filter by date command - IMPROVED: detect if date is specified
     if (cmd.includes('lọc') || (cmd.includes('hóa đơn') && (cmd.includes('ngày') || cmd.includes('tháng')) && !cmd.includes('xuất'))) {
-      await handleActionButton('📅 Lọc theo ngày');
-      return true;
+      // Check if user specified a date
+      const hasDateInfo = /\d{1,2}[\/\-]\d{1,2}|hôm nay|hôm qua|tuần|tháng \d{1,2}/.test(cmd);
+      
+      if (hasDateInfo) {
+        // User specified date - send to chat API for processing
+        return false; // Let normal chat handler process it
+      } else {
+        // No date specified - show prompt
+        await handleActionButton('📅 Lọc theo ngày');
+        return true;
+      }
     }
     
     // Direct "Quản lý hóa đơn" command
@@ -365,13 +375,18 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
       
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      const confidence = (invoice.confidence * 100).toFixed(1);
-      const confidenceIcon = invoice.confidence >= 0.8 ? '✅' : invoice.confidence >= 0.6 ? '⚠️' : '❌';
+      // ⭐ Ensure confidence is a valid number
+      const confidenceValue = typeof invoice.confidence === 'number' && !isNaN(invoice.confidence) 
+        ? invoice.confidence 
+        : 0.95; // Default to 95% if not available
+      
+      const confidence = (confidenceValue * 100).toFixed(1);
+      const confidenceIcon = confidenceValue >= 0.8 ? '✅' : confidenceValue >= 0.6 ? '⚠️' : '❌';
       
       let message = `${confidenceIcon} Đã xử lý hóa đơn! (Độ tin cậy: ${confidence}%)\n\n`;
       
       // Add warning for low confidence
-      if (invoice.confidence < 0.6) {
+      if (confidenceValue < 0.6) {
         message += `⚠️ Lưu ý: Độ tin cậy thấp. Vui lòng kiểm tra lại thông tin.\n\n`;
       }
       
@@ -468,10 +483,7 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         handleStopCamera();
       }
       
-      // Prompt for next action
-      setTimeout(() => {
-        addBotMessage('📤 **Tiếp theo:**\n\n• Upload file mới\n• Gõ "**mở camera**" để chụp tiếp\n• Gõ "**xem danh sách**" để xem tất cả hóa đơn');
-      }, 1000);
+      // Removed automatic action suggestions after invoice processing
       
     } catch (error) {
       setIsTyping(false);
@@ -486,10 +498,20 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
     if (inputMessage.trim()) {
       const currentTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
       const userMsg = inputMessage;
-      setMessages([...messages, 
-        { id: messages.length + 1, text: userMsg, sender: 'user', time: currentTime }
-      ]);
       setInputMessage('');
+      
+      // Check if it's a chat command first (BEFORE adding to messages)
+      const isCommand = await handleChatCommand(userMsg);
+      
+      // If it's a command, don't show user message or call chat API
+      if (isCommand) {
+        return;
+      }
+      
+      // Not a command - show user message and call chat API
+      setMessages(prev => [...prev, 
+        { id: prev.length + 1, text: userMsg, sender: 'user', time: currentTime }
+      ]);
       setIsTyping(true);
       
       try {
@@ -510,32 +532,25 @@ export function UserDashboard({ user, onLogout, onUpdateUser }: UserDashboardPro
         
         const data = await response.json();
         
-        // Check if it's a chat command first
-        const isCommand = await handleChatCommand(userMsg);
+        setIsTyping(false);
+        const botTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+        setMessages(prev => [...prev, 
+          { id: prev.length + 1, text: data.response, sender: 'bot', time: botTime }
+        ]);
         
-        if (!isCommand) {
-          setIsTyping(false);
-          const botTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-          setMessages(prev => [...prev, 
-            { id: prev.length + 1, text: data.response, sender: 'bot', time: botTime }
-          ]);
-          
-          // Show action buttons ONLY if asking about capabilities
-          const isCapabilityQuestion = 
-            (userMsg.toLowerCase().includes('làm gì') || 
-             userMsg.toLowerCase().includes('chức năng') ||
-             userMsg.toLowerCase().includes('features') ||
-             userMsg.toLowerCase().includes('capabilities')) &&
-            (userMsg.toLowerCase().includes('có thể') ||
-             userMsg.toLowerCase().includes('bạn') ||
-             userMsg.toLowerCase().includes('bot') ||
-             userMsg.toLowerCase().includes('chatbot') ||
-             userMsg.toLowerCase().includes('hệ thống'));
-          
-          setShowQuickSuggestions(isCapabilityQuestion);
-        } else {
-          setIsTyping(false);
-        }
+        // Show action buttons ONLY if asking about capabilities
+        const isCapabilityQuestion = 
+          (userMsg.toLowerCase().includes('làm gì') || 
+           userMsg.toLowerCase().includes('chức năng') ||
+           userMsg.toLowerCase().includes('features') ||
+           userMsg.toLowerCase().includes('capabilities')) &&
+          (userMsg.toLowerCase().includes('có thể') ||
+           userMsg.toLowerCase().includes('bạn') ||
+           userMsg.toLowerCase().includes('bot') ||
+           userMsg.toLowerCase().includes('chatbot') ||
+           userMsg.toLowerCase().includes('hệ thống'));
+        
+        setShowQuickSuggestions(isCapabilityQuestion);
         
         scrollToBottom();
       } catch (error) {

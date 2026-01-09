@@ -11,12 +11,12 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://postgres:GMwwQpAoEifdnriKhrfzPEkCtGmmabQb@shinkansen.proxy.rlwy.net:16775/railway
+      - DATABASE_URL=postgresql://postgres:your-password@your-host:5432/railway
       - SECRET_KEY=dev-secret-key
       - JWT_SECRET_KEY=jwt-secret-key
-      - GROQ_API_KEY=YOUR_GROQ_API_KEY_HERE
+      - GROQ_API_KEY=your-groq-api-key-here
       - PINECONE_API_KEY=
-      - GOOGLE_AI_API_KEY=YOUR_GOOGLE_AI_API_KEY_HERE
+      - GOOGLE_AI_API_KEY=your-google-ai-api-key-here
       - PORT=8000
       - ENVIRONMENT=production
       - DEBUG=false

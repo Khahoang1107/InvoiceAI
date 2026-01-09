@@ -25,6 +25,7 @@ interface Invoice {
   status: string;
   processed_at: string;
   file_path?: string;
+  filepath?: string;  // ⭐ Backend trả về field này
   image_id?: number;
 }
 
@@ -351,9 +352,13 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{invoice.processed_at}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {invoice.image_id ? (
+                        {invoice.filepath ? (
                           <button
-                            onClick={() => setViewingImage(invoice.image_id!.toString())}
+                            onClick={() => {
+                              // Extract filename from filepath or use filename directly
+                              const imagePath = invoice.filename || invoice.filepath?.split('/').pop() || invoice.filepath;
+                              setViewingImage(imagePath);
+                            }}
                             className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                             title="Xem ảnh hóa đơn"
                           >
@@ -416,7 +421,7 @@ const InvoiceManagement: React.FC<InvoiceManagementProps> = ({ onBack }) => {
             </button>
             <div className="p-4">
               <img
-                src={`http://localhost:8000/api/images/${viewingImage}`}
+                src={`/uploads/${viewingImage}`}
                 alt="Invoice"
                 className="max-w-full max-h-[80vh] object-contain mx-auto"
                 onError={(e) => {

@@ -190,7 +190,7 @@ class FileUploadService:
             
             # 🔥 NEW: Store in vector database for RAG semantic search
             try:
-                from services.vector_store import get_vector_store
+                from rag.vector_store import get_vector_store
                 vector_store = get_vector_store()
                 
                 # Prepare invoice data for vector storage

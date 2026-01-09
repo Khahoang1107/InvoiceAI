@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Pinecone Vector Database
     PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
     PINECONE_ENVIRONMENT: str = os.getenv("PINECONE_ENVIRONMENT", "gcp-starter")
+    PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "invoiceai-vectors")
+    
+    # UBIAI Configuration (Optional)
+    UBIAI_API_KEY: str = os.getenv("UBIAI_API_KEY", "")
+    UBIAI_PROJECT_ID: str = os.getenv("UBIAI_PROJECT_ID", "")
     
     # OCR Configuration
     TESSERACT_CMD: str = os.getenv("TESSERACT_CMD", "tesseract")

@@ -490,8 +490,11 @@ class DatabaseToolsPostgres:
                 for row in result:
                     # Convert Windows backslash to forward slash for URLs
                     filepath_value = row[14] if len(row) > 14 else None
-                    if filepath_value:
-                        filepath_value = filepath_value.replace('\\', '/')
+                    
+                    # ⭐ Fix filepath - return just filename for /uploads/{filename}
+                    # Static files mounted at /uploads pointing to backend/uploads/
+                    if row[2]:  # filename exists
+                        filepath_value = row[2]  # Just the filename!
                     
                     invoices.append({
                         'id': row[0],

@@ -124,7 +124,7 @@ class GroqDatabaseTools:
     
     def filter_by_date(self, start_date: str, end_date: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
-        Lọc hóa đơn theo khoảng thời gian
+        Lọc hóa đơn theo khoảng thời gian (dựa trên NGÀY TRÊN HÓA ĐƠN)
         
         Args:
             start_date: Ngày bắt đầu (YYYY-MM-DD)
@@ -132,18 +132,55 @@ class GroqDatabaseTools:
             user_id: Lọc theo user (optional)
         
         Returns:
-            Filtered invoices
+            Filtered invoices with invoice date in range
         """
         try:
+            from datetime import datetime
+            
+            # Parse input dates
+            try:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            except:
+                return {
+                    "success": False,
+                    "error": f"Invalid date format. Expected YYYY-MM-DD"
+                }
+            
             invoices = self.db_tools.get_all_invoices(limit=1000, user_id=user_id)
             filtered = []
+            
             for inv in invoices:
-                # Check invoice_date first, then created_at
-                inv_date_str = inv.get('invoice_date') or inv.get('created_at')
+                # Use invoice date (date_string field) - format DD/MM/YYYY
+                inv_date_str = inv.get('date_string') or inv.get('date') or inv.get('invoice_date')
                 if inv_date_str:
-                    inv_date = str(inv_date_str).split('T')[0]
-                    if start_date <= inv_date <= end_date:
-                        filtered.append(inv)
+                    try:
+                        inv_date_str = str(inv_date_str).strip()
+                        inv_date = None
+                        
+                        # Format 1: DD/MM/YYYY (most common in database)
+                        if '/' in inv_date_str:
+                            parts = inv_date_str.split()[0].split('/')
+                            if len(parts) == 3:
+                                try:
+                                    inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
+                                except:
+                                    pass
+                        
+                        # Format 2: YYYY-MM-DD or ISO format (fallback)
+                        if not inv_date:
+                            try:
+                                inv_date_clean = inv_date_str.split('T')[0].split()[0]
+                                inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
+                            except:
+                                pass
+                        
+                        # Check if date is in range
+                        if inv_date and start_dt.date() <= inv_date.date() <= end_dt.date():
+                            filtered.append(inv)
+                    except Exception as e:
+                        # Skip invalid dates
+                        continue
             
             return {
                 "success": True,
@@ -160,14 +197,14 @@ class GroqDatabaseTools:
     
     def count_invoices_by_date(self, date: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
-        Đếm số hóa đơn trong một ngày cụ thể
+        Đếm số hóa đơn theo NGÀY TRÊN HÓA ĐƠN (invoice date)
         
         Args:
             date: Ngày cần đếm (YYYY-MM-DD)
             user_id: Lọc theo user (optional)
         
         Returns:
-            Số lượng hóa đơn trong ngày đó
+            Số lượng hóa đơn có ngày trên hóa đơn trùng với ngày này
         """
         try:
             from datetime import datetime
@@ -185,30 +222,36 @@ class GroqDatabaseTools:
                 }
             
             for inv in invoices:
-                inv_date_str = inv.get('invoice_date') or inv.get('created_at')
+                # Use invoice date (date_string field) - format DD/MM/YYYY
+                inv_date_str = inv.get('date_string') or inv.get('date') or inv.get('invoice_date')
                 if inv_date_str:
-                    # Try multiple date formats
-                    inv_date = None
-                    inv_date_str = str(inv_date_str)
-                    
-                    # Format 1: dd/mm/yyyy
-                    if '/' in inv_date_str and len(inv_date_str.split('/')) == 3:
-                        try:
-                            inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
-                        except:
-                            pass
-                    
-                    # Format 2: yyyy-mm-dd or ISO format
-                    if not inv_date:
-                        try:
-                            inv_date_clean = inv_date_str.split('T')[0]
-                            inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
-                        except:
-                            pass
-                    
-                    # Compare dates
-                    if inv_date and inv_date.date() == input_date.date():
-                        count += 1
+                    try:
+                        inv_date_str = str(inv_date_str).strip()
+                        inv_date = None
+                        
+                        # Format 1: DD/MM/YYYY (most common in database)
+                        if '/' in inv_date_str:
+                            parts = inv_date_str.split()[0].split('/')
+                            if len(parts) == 3:
+                                try:
+                                    inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
+                                except:
+                                    pass
+                        
+                        # Format 2: YYYY-MM-DD or ISO format
+                        if not inv_date:
+                            try:
+                                inv_date_clean = inv_date_str.split('T')[0].split()[0]
+                                inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
+                            except:
+                                pass
+                        
+                        # Compare dates
+                        if inv_date and inv_date.date() == input_date.date():
+                            count += 1
+                    except Exception as e:
+                        # Skip invalid dates
+                        continue
             
             return {
                 "success": True,
@@ -262,6 +305,79 @@ class GroqDatabaseTools:
             return {
                 "success": True,
                 "type": invoice_type,
+                "count": len(filtered),
+                "invoices": filtered
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def filter_by_confidence(self, min_confidence: float = 0.0, max_confidence: float = 1.0, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Lọc hóa đơn theo độ tin cậy (confidence score)
+        
+        Args:
+            min_confidence: Độ tin cậy tối thiểu (0.0 - 1.0)
+            max_confidence: Độ tin cậy tối đa (0.0 - 1.0)
+            user_id: Lọc theo user (optional)
+        
+        Returns:
+            Invoices with confidence in range
+        """
+        try:
+            invoices = self.db_tools.get_all_invoices(limit=1000, user_id=user_id)
+            filtered = []
+            
+            for inv in invoices:
+                confidence = inv.get('confidence_score')
+                if confidence is not None:
+                    try:
+                        confidence_val = float(confidence)
+                        if min_confidence <= confidence_val <= max_confidence:
+                            filtered.append(inv)
+                    except (ValueError, TypeError):
+                        continue
+            
+            return {
+                "success": True,
+                "min_confidence": min_confidence,
+                "max_confidence": max_confidence,
+                "count": len(filtered),
+                "invoices": filtered
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def search_by_invoice_code(self, invoice_code: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Tìm hóa đơn theo mã hóa đơn (invoice_code)
+        
+        Args:
+            invoice_code: Mã hóa đơn cần tìm (có thể tìm một phần)
+            user_id: Lọc theo user (optional)
+        
+        Returns:
+            Invoices matching the code
+        """
+        try:
+            invoices = self.db_tools.get_all_invoices(limit=1000, user_id=user_id)
+            invoice_code_lower = invoice_code.lower()
+            
+            # Tìm các hóa đơn có mã khớp (exact hoặc contains)
+            filtered = []
+            for inv in invoices:
+                inv_code = str(inv.get('invoice_code', '')).lower()
+                if invoice_code_lower in inv_code or inv_code in invoice_code_lower:
+                    filtered.append(inv)
+            
+            return {
+                "success": True,
+                "invoice_code": invoice_code,
                 "count": len(filtered),
                 "invoices": filtered
             }
@@ -400,7 +516,9 @@ class GroqDatabaseTools:
                     "description": "Đếm tổng số hóa đơn. Dùng cho: 'có bao nhiêu hóa đơn', 'tổng cộng mấy hóa đơn'",
                     "parameters": {
                         "type": "object",
-                        "properties": {}
+                        "properties": {
+                            "user_id": {"type": "integer", "description": "ID của user (tự động thêm)"}
+                        }
                     }
                 }
             },
@@ -475,6 +593,77 @@ class GroqDatabaseTools:
                         "required": ["invoice_type"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "filter_by_confidence",
+                    "description": "Lọc hóa đơn theo độ tin cậy (confidence). Dùng khi: 'hóa đơn có độ tin cậy thấp', 'confidence < 80%', 'độ tin cậy dưới 100%'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "min_confidence": {"type": "number", "description": "Độ tin cậy tối thiểu (0.0-1.0). VD: 0.8 = 80%"},
+                            "max_confidence": {"type": "number", "description": "Độ tin cậy tối đa (0.0-1.0). VD: 1.0 = 100%"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_by_invoice_code",
+                    "description": "Tìm hóa đơn theo mã hóa đơn cụ thể (invoice code). Dùng khi user hỏi: 'có hóa đơn mã ABC123 không', 'tìm hóa đơn PB16040000191'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "invoice_code": {"type": "string", "description": "Mã hóa đơn cần tìm"}
+                        },
+                        "required": ["invoice_code"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_total_spending",
+                    "description": "Tính tổng chi tiêu từ tất cả hóa đơn. Dùng cho: 'tổng chi tiêu là bao nhiêu', 'tôi đã chi bao nhiêu tiền', 'tổng số tiền đã trả'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {"type": "integer", "description": "Lọc theo user (optional)"},
+                            "start_date": {"type": "string", "description": "Ngày bắt đầu (YYYY-MM-DD) - optional"},
+                            "end_date": {"type": "string", "description": "Ngày kết thúc (YYYY-MM-DD) - optional"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_spending_trends",
+                    "description": "Phân tích xu hướng chi tiêu theo thời gian. Dùng cho: 'xu hướng chi tiêu', 'chi tiêu tăng hay giảm', 'phân tích chi tiêu theo tháng'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {"type": "integer", "description": "Lọc theo user (optional)"},
+                            "months": {"type": "integer", "description": "Số tháng phân tích (mặc định 6)"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "detect_spending_anomalies",
+                    "description": "Phát hiện các hóa đơn bất thường (giá trị cao hoặc thấp bất thường). Dùng cho: 'có hóa đơn nào bất thường không', 'phát hiện chi tiêu lạ', 'hóa đơn đáng ngờ'",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "user_id": {"type": "integer", "description": "Lọc theo user (optional)"},
+                            "threshold_multiplier": {"type": "number", "description": "Hệ số ngưỡng (mặc định 2.0 = gấp đôi trung bình)"}
+                        }
+                    }
+                }
             }
         ]
     
@@ -505,6 +694,16 @@ class GroqDatabaseTools:
             return self.filter_by_date(**kwargs)
         elif tool_name == "get_invoices_by_type":
             return self.get_invoices_by_type(**kwargs)
+        elif tool_name == "filter_by_confidence":
+            return self.filter_by_confidence(**kwargs)
+        elif tool_name == "search_by_invoice_code":
+            return self.search_by_invoice_code(**kwargs)
+        elif tool_name == "get_total_spending":
+            return self.get_total_spending(**kwargs)
+        elif tool_name == "analyze_spending_trends":
+            return self.analyze_spending_trends(**kwargs)
+        elif tool_name == "detect_spending_anomalies":
+            return self.detect_spending_anomalies(**kwargs)
         elif tool_name == "get_high_value_invoices":
             return self.get_high_value_invoices(**kwargs)
         elif tool_name == "save_invoice_from_ocr":
@@ -796,6 +995,364 @@ class GroqDatabaseTools:
                     "categories": categories,
                     "most_expensive_item": most_expensive,
                     "average_price_per_item": total_value / len(items) if items else 0
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def get_total_spending(self, user_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Tính tổng chi tiêu từ tất cả hóa đơn
+        
+        Args:
+            user_id: Lọc theo user (optional)
+            start_date: Ngày bắt đầu (YYYY-MM-DD) - optional
+            end_date: Ngày kết thúc (YYYY-MM-DD) - optional
+        
+        Returns:
+            Tổng chi tiêu và phân tích chi tiết
+        """
+        try:
+            # Get invoices with filters
+            invoices = self.db_tools.get_all_invoices(limit=10000, user_id=user_id)
+            
+            # Filter by date if provided
+            if start_date or end_date:
+                filtered_invoices = []
+                for inv in invoices:
+                    inv_date_str = inv.get('date_string') or inv.get('date') or inv.get('invoice_date')
+                    if inv_date_str:
+                        try:
+                            inv_date_str = str(inv_date_str).strip()
+                            inv_date = None
+                            
+                            # Parse date
+                            if '/' in inv_date_str:
+                                parts = inv_date_str.split()[0].split('/')
+                                if len(parts) == 3:
+                                    try:
+                                        inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
+                                    except:
+                                        pass
+                            
+                            if not inv_date:
+                                try:
+                                    inv_date_clean = inv_date_str.split('T')[0].split()[0]
+                                    inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
+                                except:
+                                    pass
+                            
+                            # Check date range
+                            if inv_date:
+                                if start_date:
+                                    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                                    if inv_date < start_dt:
+                                        continue
+                                if end_date:
+                                    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                                    if inv_date > end_dt:
+                                        continue
+                                filtered_invoices.append(inv)
+                        except:
+                            continue
+                invoices = filtered_invoices
+            
+            # Calculate total spending
+            total_spending = 0
+            spending_by_type = {}
+            spending_by_vendor = {}
+            monthly_spending = {}
+            
+            for inv in invoices:
+                amount = inv.get('total_amount_numeric') or inv.get('total_amount_value') or inv.get('amount') or 0
+                total_spending += float(amount)
+                
+                # By type
+                inv_type = inv.get('invoice_type', 'unknown')
+                spending_by_type[inv_type] = spending_by_type.get(inv_type, 0) + float(amount)
+                
+                # By vendor
+                vendor = inv.get('vendor') or inv.get('seller_name') or 'Unknown'
+                spending_by_vendor[vendor] = spending_by_vendor.get(vendor, 0) + float(amount)
+                
+                # By month
+                inv_date_str = inv.get('date_string') or inv.get('date') or inv.get('invoice_date')
+                if inv_date_str:
+                    try:
+                        inv_date_str = str(inv_date_str).strip()
+                        inv_date = None
+                        
+                        if '/' in inv_date_str:
+                            parts = inv_date_str.split()[0].split('/')
+                            if len(parts) == 3:
+                                try:
+                                    inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
+                                except:
+                                    pass
+                        
+                        if not inv_date:
+                            try:
+                                inv_date_clean = inv_date_str.split('T')[0].split()[0]
+                                inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
+                            except:
+                                pass
+                        
+                        if inv_date:
+                            month_key = inv_date.strftime("%Y-%m")
+                            monthly_spending[month_key] = monthly_spending.get(month_key, 0) + float(amount)
+                    except:
+                        pass
+            
+            # Sort vendors by spending
+            top_vendors = sorted(spending_by_vendor.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            return {
+                "success": True,
+                "total_spending": total_spending,
+                "total_invoices": len(invoices),
+                "average_per_invoice": total_spending / len(invoices) if invoices else 0,
+                "spending_by_type": spending_by_type,
+                "top_vendors": [{"vendor": v[0], "amount": v[1]} for v in top_vendors],
+                "monthly_breakdown": dict(sorted(monthly_spending.items())),
+                "date_range": {
+                    "start": start_date,
+                    "end": end_date
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def analyze_spending_trends(self, user_id: Optional[int] = None, months: int = 6) -> Dict[str, Any]:
+        """
+        Phân tích xu hướng chi tiêu theo thời gian
+        
+        Args:
+            user_id: Lọc theo user (optional)
+            months: Số tháng phân tích (mặc định 6 tháng)
+        
+        Returns:
+            Xu hướng chi tiêu và insights
+        """
+        try:
+            invoices = self.db_tools.get_all_invoices(limit=10000, user_id=user_id)
+            
+            # Organize by month
+            monthly_data = {}
+            type_trends = {}
+            
+            for inv in invoices:
+                amount = inv.get('total_amount_numeric') or inv.get('total_amount_value') or inv.get('amount') or 0
+                inv_type = inv.get('invoice_type', 'unknown')
+                
+                inv_date_str = inv.get('date_string') or inv.get('date') or inv.get('invoice_date')
+                if inv_date_str:
+                    try:
+                        inv_date_str = str(inv_date_str).strip()
+                        inv_date = None
+                        
+                        if '/' in inv_date_str:
+                            parts = inv_date_str.split()[0].split('/')
+                            if len(parts) == 3:
+                                try:
+                                    inv_date = datetime.strptime(inv_date_str.split()[0], "%d/%m/%Y")
+                                except:
+                                    pass
+                        
+                        if not inv_date:
+                            try:
+                                inv_date_clean = inv_date_str.split('T')[0].split()[0]
+                                inv_date = datetime.strptime(inv_date_clean, "%Y-%m-%d")
+                            except:
+                                pass
+                        
+                        if inv_date:
+                            month_key = inv_date.strftime("%Y-%m")
+                            
+                            if month_key not in monthly_data:
+                                monthly_data[month_key] = {
+                                    "total": 0,
+                                    "count": 0,
+                                    "by_type": {}
+                                }
+                            
+                            monthly_data[month_key]["total"] += float(amount)
+                            monthly_data[month_key]["count"] += 1
+                            
+                            if inv_type not in monthly_data[month_key]["by_type"]:
+                                monthly_data[month_key]["by_type"][inv_type] = 0
+                            monthly_data[month_key]["by_type"][inv_type] += float(amount)
+                            
+                            # Track type trends
+                            if inv_type not in type_trends:
+                                type_trends[inv_type] = []
+                            type_trends[inv_type].append({
+                                "month": month_key,
+                                "amount": float(amount)
+                            })
+                    except:
+                        pass
+            
+            # Calculate trends
+            sorted_months = sorted(monthly_data.keys())[-months:]
+            trend_data = []
+            
+            for month in sorted_months:
+                data = monthly_data[month]
+                trend_data.append({
+                    "month": month,
+                    "total": data["total"],
+                    "count": data["count"],
+                    "average": data["total"] / data["count"] if data["count"] > 0 else 0,
+                    "by_type": data["by_type"]
+                })
+            
+            # Detect trend direction
+            if len(trend_data) >= 2:
+                recent_avg = sum(d["total"] for d in trend_data[-3:]) / min(3, len(trend_data))
+                older_avg = sum(d["total"] for d in trend_data[:3]) / min(3, len(trend_data))
+                
+                if recent_avg > older_avg * 1.1:
+                    trend_direction = "tăng"
+                    change_percent = ((recent_avg - older_avg) / older_avg * 100) if older_avg > 0 else 0
+                elif recent_avg < older_avg * 0.9:
+                    trend_direction = "giảm"
+                    change_percent = ((older_avg - recent_avg) / older_avg * 100) if older_avg > 0 else 0
+                else:
+                    trend_direction = "ổn định"
+                    change_percent = 0
+            else:
+                trend_direction = "chưa đủ dữ liệu"
+                change_percent = 0
+            
+            return {
+                "success": True,
+                "months_analyzed": len(sorted_months),
+                "trend_direction": trend_direction,
+                "change_percent": round(change_percent, 2),
+                "monthly_data": trend_data,
+                "insights": {
+                    "highest_month": max(trend_data, key=lambda x: x["total"]) if trend_data else None,
+                    "lowest_month": min(trend_data, key=lambda x: x["total"]) if trend_data else None,
+                    "average_monthly_spending": sum(d["total"] for d in trend_data) / len(trend_data) if trend_data else 0,
+                    "total_invoices": sum(d["count"] for d in trend_data)
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def detect_spending_anomalies(self, user_id: Optional[int] = None, threshold_multiplier: float = 2.0) -> Dict[str, Any]:
+        """
+        Phát hiện các hóa đơn bất thường (giá trị cao hơn bình thường nhiều)
+        
+        Args:
+            user_id: Lọc theo user (optional)
+            threshold_multiplier: Hệ số ngưỡng (mặc định 2.0 = gấp đôi trung bình)
+        
+        Returns:
+            Danh sách hóa đơn bất thường và phân tích
+        """
+        try:
+            invoices = self.db_tools.get_all_invoices(limit=10000, user_id=user_id)
+            
+            if not invoices:
+                return {
+                    "success": False,
+                    "error": "No invoices found"
+                }
+            
+            # Calculate statistics
+            amounts = []
+            for inv in invoices:
+                amount = inv.get('total_amount_numeric') or inv.get('total_amount_value') or inv.get('amount') or 0
+                amounts.append(float(amount))
+            
+            # Calculate mean and standard deviation
+            mean_amount = sum(amounts) / len(amounts) if amounts else 0
+            variance = sum((x - mean_amount) ** 2 for x in amounts) / len(amounts) if amounts else 0
+            std_dev = variance ** 0.5
+            
+            # Detect anomalies
+            anomalies = []
+            threshold = mean_amount * threshold_multiplier
+            
+            for inv in invoices:
+                amount = inv.get('total_amount_numeric') or inv.get('total_amount_value') or inv.get('amount') or 0
+                amount_float = float(amount)
+                
+                # Check if anomaly
+                is_anomaly = False
+                anomaly_type = ""
+                severity = "low"
+                
+                if amount_float > threshold:
+                    is_anomaly = True
+                    anomaly_type = "high_value"
+                    if amount_float > mean_amount * 3:
+                        severity = "high"
+                    elif amount_float > mean_amount * 2.5:
+                        severity = "medium"
+                    else:
+                        severity = "low"
+                elif amount_float > 0 and amount_float < mean_amount * 0.3:
+                    is_anomaly = True
+                    anomaly_type = "unusually_low"
+                    severity = "low"
+                
+                # Check for suspicious patterns
+                invoice_code = inv.get('invoice_code', '')
+                if is_anomaly or (invoice_code and len(invoice_code) < 3):
+                    # Additional checks
+                    vendor = inv.get('vendor') or inv.get('seller_name') or ''
+                    if not vendor or len(vendor) < 3:
+                        severity = "high"
+                        if not is_anomaly:
+                            is_anomaly = True
+                            anomaly_type = "missing_vendor"
+                
+                if is_anomaly:
+                    deviation = ((amount_float - mean_amount) / mean_amount * 100) if mean_amount > 0 else 0
+                    anomalies.append({
+                        "invoice_id": inv.get('id'),
+                        "invoice_number": inv.get('invoice_number'),
+                        "invoice_code": inv.get('invoice_code'),
+                        "amount": amount_float,
+                        "vendor": inv.get('vendor') or inv.get('seller_name'),
+                        "date": inv.get('date_string') or inv.get('date'),
+                        "anomaly_type": anomaly_type,
+                        "severity": severity,
+                        "deviation_percent": round(deviation, 2),
+                        "times_above_average": round(amount_float / mean_amount, 2) if mean_amount > 0 else 0
+                    })
+            
+            # Sort by severity and amount
+            severity_order = {"high": 3, "medium": 2, "low": 1}
+            anomalies.sort(key=lambda x: (severity_order.get(x["severity"], 0), x["amount"]), reverse=True)
+            
+            return {
+                "success": True,
+                "total_invoices": len(invoices),
+                "anomalies_found": len(anomalies),
+                "statistics": {
+                    "mean_amount": round(mean_amount, 2),
+                    "std_deviation": round(std_dev, 2),
+                    "threshold_used": round(threshold, 2),
+                    "min_amount": round(min(amounts), 2) if amounts else 0,
+                    "max_amount": round(max(amounts), 2) if amounts else 0
+                },
+                "anomalies": anomalies[:20],  # Return top 20
+                "severity_breakdown": {
+                    "high": len([a for a in anomalies if a["severity"] == "high"]),
+                    "medium": len([a for a in anomalies if a["severity"] == "medium"]),
+                    "low": len([a for a in anomalies if a["severity"] == "low"])
                 }
             }
         except Exception as e:

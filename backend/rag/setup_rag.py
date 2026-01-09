@@ -14,7 +14,7 @@ from typing import List, Dict, Any
 # Add backend to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from services.vector_db import VectorService
+from services.vector_db.vector_service import VectorService
 from utils.database_tools import DatabaseTools
 
 def get_invoices_from_database(db_tools) -> List[Dict[str, Any]]:

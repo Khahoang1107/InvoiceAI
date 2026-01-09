@@ -16,30 +16,40 @@ from schemas.models import ChatRequest, ChatResponse
 from services.intent_detector import IntentDetector
 from services.invoice_query_service import InvoiceQueryService
 from services.metrics_service import MetricsService
+from services.conversation_memory_service import get_memory_service
+from services.learning_service import get_learning_service
 
 try:
     from groq import Groq
     from groq.types.chat import ChatCompletion
+    from groq_tools import DecimalEncoder
 except ImportError:
     Groq = None  # type: ignore
     ChatCompletion = None  # type: ignore
+    DecimalEncoder = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
 class ChatService:
-    """Chat message handling and Groq AI integration with RAG"""
+    """Chat message handling and Groq AI integration with RAG and Conversation Memory"""
 
     def __init__(self):
         self.db = container.db
         self.groq_client = container.groq_client
         self.settings = container.settings
         
-        # Initialize intent detector
+        # Initialize intent detector with semantic understanding
         self.intent_detector = IntentDetector()
         
         # Initialize metrics service
         self.metrics_service = MetricsService()
+        
+        # Initialize conversation memory for context awareness
+        self.memory_service = get_memory_service()
+        
+        # Initialize learning service for continuous improvement
+        self.learning_service = None  # Lazy init with vector store
         
         # Lazy initialization flags
         self.database_available = False
@@ -74,10 +84,14 @@ class ChatService:
             return
             
         try:
-            from services.vector_store import get_vector_store
+            from rag.vector_store import get_vector_store
             
             self.vector_store = get_vector_store()
             self.rag_available = True
+            
+            # Initialize learning service với vector store
+            self.learning_service = get_learning_service(vector_store=self.vector_store)
+            
             logger.info("✅ Vector store initialized for RAG")
         except Exception as e:
             logger.warning(f"RAG components not available: {e}")
@@ -125,9 +139,10 @@ class ChatService:
             if intent['needs_database']:
                 self._ensure_database()
             
-            # Get conversation context
+            # Get conversation context (memory for previous messages)
             conversation_id = request.conversation_id or str(user_id)
-            context_messages = self._get_conversation_context(user_id, conversation_id)
+            context_messages = self.memory_service.get_context(conversation_id, num_messages=5)
+            logger.info(f"📝 Using {len(context_messages)} previous messages as context")
             
             # Route based on intent
             if intent['needs_database'] and self.database_available:
@@ -140,14 +155,35 @@ class ChatService:
             if intent['needs_database']:
                 self._ensure_rag()
             
+            # 🎓 LEARNING: Tìm các câu hỏi tương tự đã được hỏi trước
+            similar_past_queries = []
+            if self.learning_service:
+                try:
+                    similar_past_queries = await self.learning_service.get_similar_past_queries(
+                        current_query=request.message,
+                        user_id=user_id,
+                        top_k=2
+                    )
+                    if similar_past_queries:
+                        logger.info(f"🎓 Found {len(similar_past_queries)} similar past queries for learning")
+                except Exception as e:
+                    logger.warning(f"Learning retrieval failed: {e}")
+            
             # Retrieve from RAG if available (semantic vector search)
             retrieved_context = ""
             retrieval_scores = []
             if self.rag_available and self.vector_store and intent['needs_database']:
                 try:
+                    # 🔗 CONTEXT-AWARE RAG: Kết hợp câu hỏi hiện tại với context từ câu trước
+                    enhanced_query = self._create_enhanced_query(
+                        current_query=request.message,
+                        context_messages=context_messages
+                    )
+                    logger.info(f"🔍 Enhanced RAG query: {enhanced_query[:100]}...")
+                    
                     # Semantic search in vector store
                     relevant_docs = await self.vector_store.search(
-                        request.message, 
+                        enhanced_query, 
                         top_k=3
                     )
                     if relevant_docs:
@@ -176,7 +212,33 @@ class ChatService:
                 user_id  # Pass user_id for function calling
             )
             
-            # Store messages in database
+            # Store messages in memory for context awareness
+            self.memory_service.add_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role="user",
+                content=request.message,
+                metadata={
+                    "intent_type": intent.get("type"),
+                    "intent_confidence": intent.get("confidence"),
+                    "detection_method": intent.get("method")
+                }
+            )
+            
+            # Store AI response
+            self.memory_service.add_message(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                role="assistant",
+                content=groq_response["content"],
+                metadata={
+                    "tokens_used": groq_response.get("tokens", 0),
+                    "used_database": database_context is not None,
+                    "used_retrieval": len(retrieved_context) > 0
+                }
+            )
+            
+            # Also store in database (if schema is ready)
             self._store_messages(
                 user_id=user_id,
                 user_message=request.message,
@@ -198,6 +260,25 @@ class ChatService:
                 tokens_used=groq_response.get("tokens", 0),
                 execution_time=execution_time_ms
             )
+            
+            # 🎓 LEARNING: Lưu successful interaction để AI học
+            if self.learning_service and len(groq_response["content"]) > 0:
+                try:
+                    await self.learning_service.save_successful_interaction(
+                        user_id=user_id,
+                        user_query=request.message,
+                        ai_response=groq_response["content"],
+                        intent_type=intent.get('type', 'unknown'),
+                        metadata={
+                            "intent_confidence": intent.get('confidence', 0),
+                            "used_database": database_context is not None,
+                            "used_function_calling": groq_response.get('used_tool_calling', False),
+                            "tokens_used": groq_response.get("tokens", 0),
+                            "execution_time_ms": execution_time_ms
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save interaction for learning: {e}")
             
             return ChatResponse(
                 response=groq_response["content"],
@@ -253,7 +334,7 @@ class ChatService:
                     messages=cast(List[Dict[str, Any]], messages),  # type: ignore
                     tools=cast(List[Dict[str, Any]], tools),  # type: ignore
                     tool_choice="auto",  # Let Groq decide when to call
-                    max_tokens=1024,
+                    max_tokens=2048,
                     temperature=0.7
                 )
                 
@@ -265,7 +346,9 @@ class ChatService:
                     
                     # Add user_id to tool args for filtering BEFORE logging
                     if tool_name in ["get_all_invoices", "filter_by_date", "get_invoices_by_type", 
-                                     "count_invoices_by_date", "count_total_invoices"]:
+                                     "count_invoices_by_date", "count_total_invoices", "search_by_invoice_code",
+                                     "filter_by_confidence", "get_total_spending", "analyze_spending_trends", 
+                                     "detect_spending_anomalies"]:
                         tool_args["user_id"] = user_id
                     
                     logger.info(f"🔧 Groq calling tool: {tool_name} with args: {tool_args}")
@@ -310,13 +393,20 @@ class ChatService:
                     messages.append({
                         "role": "assistant",
                         "content": "",
-                        "tool_calls": [tool_call]  # type: ignore
+                        "tool_calls": [{
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments
+                            }
+                        }]
                     })
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": json.dumps(tool_result)
-                    })  # type: ignore
+                        "content": json.dumps(tool_result, cls=DecimalEncoder)
+                    })
                     
                     # Get final response from Groq
                     if not self.groq_client:
@@ -325,7 +415,7 @@ class ChatService:
                     final_response = self.groq_client.chat.completions.create(
                         model=self.settings.GROQ_MODEL,
                         messages=cast(List[Dict[str, Any]], messages),  # type: ignore
-                        max_tokens=1024,
+                        max_tokens=2048,
                         temperature=0.7
                     )
                     
@@ -342,7 +432,7 @@ class ChatService:
                 response = self.groq_client.chat.completions.create(
                     model=self.settings.GROQ_MODEL,
                     messages=cast(List[Dict[str, Any]], messages),  # type: ignore
-                    max_tokens=1024,
+                    max_tokens=2048,
                     temperature=0.7
                 )
             
@@ -361,90 +451,221 @@ class ChatService:
         retrieved_context: str
     ) -> str:
         """
-        Create system prompt with database results and RAG context
-        
-        Args:
-            database_context: Query results from database
-            retrieved_context: Retrieved documents from vector store
-            
-        Returns:
-            System prompt string
+        Create system prompt with semantic understanding for natural responses
         """
-        base_prompt = """Bạn là Trợ lý Hóa đơn tận tâm và chính xác.
-        
-QUY TẮC VÀNG:
-1. Sử dụng TOOLS/FUNCTIONS để lấy dữ liệu thời gian thực từ database khi cần.
-2. CHỈ trả lời dựa trên dữ liệu được cung cấp hoặc lấy từ tools.
-3. NẾU cần dữ liệu mà chưa có, GỌI FUNCTION tương ứng (filter_by_date, get_all_invoices, etc.)
-4. KHÔNG được bịa ra, ước đoán, hoặc thêm thắt thông tin.
-5. Trả lời CHI TIẾT, DỄ HIỂU, và HỮU ÍCH.
+        base_prompt = """Bạn là Trợ lý Hóa đơn thông minh - một AI chuyên gia hỗ trợ quản lý, tra cứu và phân tích hóa đơn.
 
-CÁC FUNCTION KHẢ DỤNG:
-- filter_by_date: Lọc hóa đơn theo ngày (hôm nay, tuần này, tháng này)
-- get_all_invoices: Lấy tất cả hóa đơn
-- get_invoices_by_type: Lọc theo loại hóa đơn
-- get_statistics: Thống kê tổng hợp
+📅 THÔNG TIN HỆ THỐNG:
+- Ngày hiện tại: {current_date} (DD/MM/YYYY)
+- Sử dụng thông tin này để xử lý "hôm nay", "hôm qua", "tuần này", "tháng này"
 
-VÍ DỤ SỬ DỤNG:
-- "hôm nay có mấy hóa đơn" → Gọi filter_by_date(start_date="2025-12-28", end_date="2025-12-28")
-- "tháng này chi bao nhiêu" → Gọi filter_by_date với start_date = đầu tháng
-- "có bao nhiêu hóa đơn" → Gọi get_all_invoices()
+🎯 NGUYÊN TẮC LÀM VIỆC:
+1. ✅ HIỂU VĂN VĂN: Phân tích ý định thực của user, không chỉ từ khóa
+2. ✅ TRỰC TIẾP: Trả lời các câu hỏi một cách tự nhiên, dễ hiểu
+3. ✅ CHÍNH XÁC: Chỉ sử dụng dữ liệu được cung cấp, không bịa ra
+4. ✅ THÂN THIỆN: Sử dụng tone tự nhiên, cách nói của người Việt
+5. ✅ HỮU ÍCH: Đưa ra kết luận hoặc đề xuất khi phù hợp
+6. 🔗 THEO DÕI NGỮ CẢNH: Sử dụng conversation history để hiểu câu hỏi nối tiếp
 
-HƯỚNG DẪN TRẢ LỜI:
-- Với câu hỏi về số tiền: Trích dẫn chính xác từ dữ liệu
-- Với câu hỏi về ngày tháng: Đưa ra định dạng dễ đọc
-- Với câu hỏi về sản phẩm/dịch vụ: Liệt kê rõ ràng
-- Với câu hỏi tổng hợp: Tóm tắt có cấu trúc"""
+🔗 XỬ LÝ CÂU HỎI NỐI TIẾP - CỰC KỲ QUAN TRỌNG:
+Khi user hỏi "đó là", "cái đó", "nó", "số tiền bao nhiêu", "là gì":
+1. ✅ XEM LẠI tin nhắn trước trong conversation history
+2. ✅ TÌM thông tin được đề cập ở câu trả lời trước
+3. ✅ TRẢ LỜI dựa trên context đó
 
-        # Add database query results
+📝 VÍ DỤ FOLLOW-UP:
+User: "hóa đơn ngày 14/10/2025"
+AI: "Có 2 hóa đơn ngày 14/10/2025..."
+User: "đó là" hoặc "số tiền bao nhiêu"
+→ AI PHẢI hiểu "đó" = 2 hóa đơn ngày 14/10/2025 từ câu trước
+→ Nếu đã có dữ liệu trong tin nhắn trước: TRẢ LỜI NGAY
+→ Nếu chưa có chi tiết: GỌI filter_by_date("2025-10-14", "2025-10-14")
+
+📊 KHUNG TRẢ LỜI:
+- Với câu hỏi về SỐ TIỀN: Nêu rõ tổng, đơn vị (VND), và khoảng thời gian
+- Với câu hỏi về DANH SÁCH: 🔴 LUÔN LUÔN LIỆT KÊ CHI TIẾT từng hóa đơn (mã, ngày, số tiền, người bán/mua)
+  • Nếu <= 5 hóa đơn: Liệt kê ĐẦY ĐỦ tất cả
+  • Nếu > 5 hóa đơn: Liệt kê 5 hóa đơn đầu + tóm tắt phần còn lại
+  • 🔴 KHÔNG BAO GIỜ chỉ nói "Có X hóa đơn" rồi dừng - PHẢI liệt kê chi tiết!
+- Với câu hỏi về THỐNG KÊ: Trình bày theo mục, so sánh các thời kỳ
+- Với câu hỏi VỀ TÌM KIẾM: Nêu các hóa đơn khớp, hoặc gợi ý tinh chỉnh
+
+📋 FORMAT LIỆT KÊ HÓA ĐƠN - BẮT BUỘC:
+🔴 QUAN TRỌNG: [invoice_code], [seller], [buyer], [amount] là PLACEHOLDER - PHẢI thay thế bằng DỮ LIỆU THỰC!
+
+Khi nhận được dữ liệu từ function, ĐỌC dữ liệu và format như sau:
+
+**Tìm thấy X hóa đơn:**
+
+1. **Mã: PB16040000191** (Điện)
+   - 📅 Ngày: 14/10/2025
+   - 🏢 Người bán: Công ty Điện lực
+   - 👤 Người mua: Duong Thanh Tung
+   - 💰 Số tiền: 691,438 VND
+
+2. **Mã: PB16010051828** (Điện)
+   - 📅 Ngày: 10/11/2025
+   - 🏢 Người bán: Công ty Điện lực
+   - 👤 Người mua: Pham Van Giau
+   - 💰 Số tiền: 294,948 VND
+
+⚠️ KHÔNG BAO GIỜ trả về [invoice_code] hoặc [seller] - PHẢI là dữ liệu thực!
+→ Đọc từ tool result: invoice.get('invoice_code'), invoice.get('seller_name'), etc.
+
+🔧 FUNCTION CALLING:
+Nếu user hỏi về dữ liệu mà bạn chưa có, GỌI FUNCTION tương ứng:
+
+- **search_by_invoice_code(invoice_code)** - 🔍 Dùng khi user hỏi về MÃ HÓA ĐƠN CỤ THỂ
+  • Ví dụ: "có hóa đơn mã PB16040000191 không?" → search_by_invoice_code("PB16040000191")
+  • Ví dụ: "tìm hóa đơn PB1601" → search_by_invoice_code("PB1601")
+  • Ví dụ: "hóa đơn 000191" → search_by_invoice_code("000191")
+  • ⚠️ Hỗ trợ tìm kiếm cả chính xác và một phần (partial match)
+
+- **count_invoices_by_date(date)** - ❌ KHÔNG BAO GIỜ dùng chức năng này! Luôn dùng filter_by_date để có thông tin đầy đủ
+  
+- **filter_by_date(start_date, end_date)** - ✅ LUÔN LUÔN dùng cho TẤT CẢ câu hỏi về ngày tháng
+  • Ví dụ: "hóa đơn ngày 10/11/2025" → filter_by_date("2025-11-10", "2025-11-10")  
+  • Ví dụ: "có bao nhiêu hóa đơn ngày X" → filter_by_date("YYYY-MM-DD", "YYYY-MM-DD") rồi đếm
+  • Ví dụ: "lọc hóa đơn", "xem hóa đơn", "tìm hóa đơn" → filter_by_date()
+  • Ví dụ: "xem hóa đơn tháng 11" → filter_by_date("2025-11-01", "2025-11-30")
+  
+- **get_all_invoices(limit)** - Dùng cho câu hỏi TỔNG QUÁT
+  • Ví dụ: "xem tất cả hóa đơn", "danh sách hóa đơn"
+  
+- **get_invoices_by_type(invoice_type)** - Dùng khi hỏi về LOẠI HÓA ĐƠN
+  • Ví dụ: "hóa đơn điện", "hóa đơn nước"
+
+⚠️ CHUYỂN ĐỔI NGÀY - CỰC KỲ QUAN TRỌNG:
+🔴 User luôn nhập ngày theo định dạng Việt Nam: DD/MM/YYYY
+🔴 Bạn PHẢI chuyển sang ISO format: YYYY-MM-DD trước khi gọi function
+
+📅 QUY TẮC CHUYỂN ĐỔI:
+- DD/MM/YYYY → YYYY-MM-DD
+- 10/11/2025 (ngày 10 tháng 11) → "2025-11-10" 
+- 08/01/2025 (ngày 8 tháng 1) → "2025-01-08"
+- 25/12/2024 (ngày 25 tháng 12) → "2024-12-25"
+
+⏰ THỜI GIAN TƯƠNG ĐỐI:
+- "hôm nay" → Ngày hiện tại từ THÔNG TIN HỆ THỐNG
+- "hôm qua" → Ngày hiện tại - 1 ngày
+- "tuần này" → 7 ngày gần nhất từ hôm nay
+- "tháng này" → Tất cả ngày trong tháng hiện tại
+- "tháng trước" → Tất cả ngày trong tháng trước
+
+VÍ DỤ (giả sử hôm nay là 09/01/2026):
+- "hóa đơn hôm nay" → filter_by_date("2026-01-09", "2026-01-09")
+- "hóa đơn hôm qua" → filter_by_date("2026-01-08", "2026-01-08")
+- "hóa đơn tuần này" → filter_by_date("2026-01-02", "2026-01-09")
+- "hóa đơn tháng này" → filter_by_date("2026-01-01", "2026-01-31")
+
+⚠️ LƯU Ý QUAN TRỌNG:
+- Khi user nói "LỌC", "XEM", "TÌM", "DANH SÁCH" → LUÔN dùng filter_by_date hoặc get_all_invoices
+- Khi user hỏi "CÓ BAO NHIÊU", "SỐ LƯỢNG", "COUNT" → Dùng count_invoices_by_date
+- LUÔN LUÔN chuyển đổi DD/MM/YYYY → YYYY-MM-DD trước khi gọi function
+
+💡 SEMANTIC UNDERSTANDING - VÍ DỤ:
+- "bao nhiêu tiền tôi đã chi tuần này" → Tìm tổng từ hôm nay - 7 ngày
+- "có nhà cung cấp nào mới không" → Tìm hóa đơn gần đây từ vendor mới
+- "tôi chi nhiều hay ít tháng này so với tháng trước" → So sánh
+- "cửa hàng nào tôi mua nhiều nhất" → Thống kê theo vendor
+- "hóa đơn to nhất là cái nào" → Tìm hóa đơn có số tiền cao nhất
+- "có hóa đơn mã PB16040000191 không" → search_by_invoice_code("PB16040000191")
+- "tìm hóa đơn có mã 000191" → search_by_invoice_code("000191")
+
+⚠️ KHÔNG ĐƯỢC:
+❌ Bịa ra dữ liệu hoặc ước đoán khi không rõ
+❌ Trả lời dài dòng hoặc không cần thiết
+❌ Sử dụng format quá formal hoặc nhân tạo
+❌ Bỏ qua ngữ cảnh từ cuộc hội thoại trước
+❌ TỰ Ý ĐOÁN số tiền, ngày tháng, hoặc thông tin hóa đơn
+❌ Trả lời về hóa đơn mà KHÔNG CÓ trong dữ liệu được cung cấp
+
+🔴 QUY TẮC VÀNG - CHỐNG HALLUCINATION:
+1. Nếu user hỏi về MÃ HÓA ĐƠN cụ thể → BẮT BUỘC gọi search_by_invoice_code()
+2. Nếu KHÔNG CÓ dữ liệu từ function → NÓI RÕNG "Không tìm thấy"
+3. KHÔNG BAO GIỜ tự bịa ra số tiền, ngày, mã hóa đơn
+4. Khi không chắc chắn → HỎI user hoặc GỌI FUNCTION để lấy dữ liệu
+
+✨ TONE & STYLE:
+- Tự nhiên, giống người thực
+- Dùng emoji khi thích hợp (không lạm dụng)
+- Cách nói ngôn ngữ Việt tự nhiên
+- Ngắn gọn nhưng đủ thông tin"""
+
+        # Inject current date into prompt
+        from datetime import datetime
+        current_date = datetime.now().strftime("%d/%m/%Y")
+        base_prompt = base_prompt.format(current_date=current_date)
+
+        # Add database context
         data_section = ""
         if database_context:
-            data_section += "\n\n--- DỮ LIỆU TỪ DATABASE ---\n"
+            data_section += "\n\n═══ DỮ LIỆU TỪ DATABASE ═══\n"
             
             if "total_amount" in database_context:
                 try:
                     total = float(database_context['total_amount'])
-                    data_section += f"Tổng tiền: {total:,.0f} VND\n"
+                    data_section += f"💰 Tổng tiền: {total:,.0f} VND\n"
                 except (ValueError, TypeError):
-                    data_section += f"Tổng tiền: {database_context['total_amount']} VND\n"
-                data_section += f"Số hóa đơn: {database_context.get('invoice_count', 0)}\n"
+                    data_section += f"💰 Tổng tiền: {database_context['total_amount']} VND\n"
+                
+                data_section += f"📄 Số hóa đơn: {database_context.get('invoice_count', 0)}\n"
+                
                 if database_context.get('time_period'):
-                    data_section += f"Thời gian: {database_context['time_period']}\n"
+                    data_section += f"📅 Thời gian: {database_context['time_period']}\n"
             
             if "invoices" in database_context and database_context["invoices"]:
-                data_section += f"\nDanh sách {len(database_context['invoices'])} hóa đơn:\n"
-                for idx, inv in enumerate(database_context["invoices"][:10], 1):
+                invoices_list = database_context["invoices"]
+                data_section += f"\n📋 Chi tiết ({len(invoices_list)} hóa đơn):\n"
+                
+                # Format invoices naturally
+                for idx, inv in enumerate(invoices_list[:10], 1):
                     vendor = inv.get('vendor_name', 'N/A')
                     amount = inv.get('total_amount', 0)
                     date = inv.get('invoice_date', inv.get('created_at', 'N/A'))
                     try:
                         amount_val = float(amount) if amount else 0
-                        data_section += f"{idx}. {vendor}: {amount_val:,.0f} VND (Ngày: {date})\n"
+                        data_section += f"  {idx}️⃣ {vendor}: {amount_val:,.0f} VND ({date})\n"
                     except (ValueError, TypeError):
-                        data_section += f"{idx}. {vendor}: {amount} VND (Ngày: {date})\n"
+                        data_section += f"  {idx}️⃣ {vendor}: {amount} VND ({date})\n"
+                
+                if len(invoices_list) > 10:
+                    data_section += f"  ... và {len(invoices_list) - 10} hóa đơn khác\n"
             
             if "grouped_data" in database_context:
-                data_section += "\nThống kê theo thời gian:\n"
+                data_section += "\n📊 Thống kê theo thời gian:\n"
                 for period, stats in database_context["grouped_data"].items():
                     try:
                         total_val = float(stats['total'])
-                        data_section += f"- {period}: {stats['count']} hóa đơn, Tổng: {total_val:,.0f} VND\n"
+                        data_section += f"  • {period}: {stats['count']} hóa đơn → {total_val:,.0f} VND\n"
                     except (ValueError, TypeError):
-                        data_section += f"- {period}: {stats['count']} hóa đơn, Tổng: {stats['total']} VND\n"
+                        data_section += f"  • {period}: {stats['count']} hóa đơn → {stats['total']} VND\n"
         
-        # Add RAG context if available
+        # Add RAG context for semantic search
         if retrieved_context.strip():
-            data_section += "\n\n--- DỮ LIỆU TỪ VECTOR STORE ---\n"
+            data_section += "\n\n═══ DỮ LIỆU LIÊN QUAN ═══\n"
             data_section += retrieved_context
         
         if data_section:
-            return f"{base_prompt}\n{data_section}\n\nHãy trả lời dựa trên dữ liệu ở trên."
+            return f"""{base_prompt}
+
+{data_section}
+
+---
+HÃY TRẢ LỜI DỰA TRÊN DỮ LIỆU Ở TRÊN, TỰ NHIÊN VÀ ĐỦ THÔNG TIN."""
         else:
             return f"""{base_prompt}
 
-DỮ LIỆU: Không tìm thấy dữ liệu liên quan trong kho lưu trữ.
+---
+ℹ️ HIỆN TẠI: Chưa có dữ liệu hóa đơn để truy vấn.
 
-Vui lòng upload hóa đơn để tôi có thể hỗ trợ bạn tốt hơn."""
+Tôi có thể:
+1. 🎓 Hướng dẫn cách sử dụng hệ thống
+2. 💡 Giải thích các tính năng
+3. 📤 Giúp bạn upload hóa đơn
+4. 📚 Trả lời câu hỏi chung
+
+Hãy nói cho tôi bạn cần gì!"""
     
     def _format_retrieved_context(self, documents: List[Dict[str, Any]]) -> str:
         """
@@ -487,18 +708,41 @@ ID: {invoice_id}
         return "\n".join(context_parts)
     
     def _get_conversation_context(self, user_id: int, conversation_id: str) -> List[dict]:
-        """Fetch recent messages from conversation"""
+        """
+        Fetch recent messages from conversation to provide context awareness
+        
+        This allows the chatbot to remember previous messages and provide
+        more coherent responses in multi-turn conversations.
+        """
         try:
-            # Query messages from database
-            # messages = self.db.query(Message).filter(
-            #     Message.user_id == user_id,
-            #     Message.conversation_id == conversation_id
-            # ).order_by(Message.created_at.desc()).limit(5).all()
+            # Build context from recent messages
+            # In production, these would be fetched from database
+            context = []
             
-            # Placeholder
-            return []
+            # Try to fetch from database (enable this when schema is ready)
+            try:
+                # Query recent messages for this conversation
+                recent_messages = []
+                
+                # Format messages for Groq (max 5 recent messages for context window)
+                for msg in recent_messages[-5:]:  # Last 5 messages
+                    role = "user" if msg.get("sender") == "user" else "assistant"
+                    context.append({
+                        "role": role,
+                        "content": msg.get("content", "")
+                    })
+                
+                logger.info(f"✅ Retrieved {len(context)} context messages for conversation {conversation_id}")
+                return context
+            
+            except Exception as db_error:
+                # Database might not have message storage yet - log and continue
+                logger.debug(f"No conversation history in database yet: {db_error}")
+                return []
+        
         except Exception as e:
-            raise DatabaseException(f"Failed to get conversation context: {str(e)}")
+            logger.warning(f"Failed to get conversation context: {e}")
+            return []
     
     def _store_messages(self, user_id: int, user_message: str, ai_response: str, conversation_id: str):
         """Store user and AI messages in database"""
@@ -524,6 +768,51 @@ ID: {invoice_id}
         except Exception as e:
             self.db.rollback()
             raise DatabaseException(f"Failed to store messages: {str(e)}")
+    
+    def _create_enhanced_query(
+        self, 
+        current_query: str, 
+        context_messages: List[Dict[str, Any]]
+    ) -> str:
+        """
+        🔗 Tạo enhanced query cho RAG bằng cách kết hợp câu hỏi hiện tại với context
+        
+        Giúp RAG hiểu được follow-up questions như:
+        - "đó là ??" 
+        - "số tiền bao nhiêu?"
+        - "cái nào?"
+        
+        Args:
+            current_query: Câu hỏi hiện tại của user
+            context_messages: Tin nhắn trước đó từ conversation memory
+            
+        Returns:
+            Enhanced query string
+        """
+        # Nếu câu hỏi hiện tại có tham chiếu (đó, cái đó, nó, cái nào, etc)
+        reference_words = ["đó", "cái đó", "nó", "cái nào", "là gì", "bao nhiêu", "như thế nào"]
+        has_reference = any(word in current_query.lower() for word in reference_words)
+        
+        if not has_reference or not context_messages:
+            return current_query
+        
+        # Lấy 2 tin nhắn gần nhất (1 user + 1 assistant)
+        recent_context = []
+        for msg in context_messages[-2:]:
+            if msg.get("role") == "user":
+                recent_context.append(f"Câu hỏi trước: {msg['content']}")
+            elif msg.get("role") == "assistant":
+                # Chỉ lấy phần đầu của response (max 200 chars)
+                content = msg['content'][:200]
+                recent_context.append(f"Trả lời trước: {content}")
+        
+        # Kết hợp context với câu hỏi hiện tại
+        if recent_context:
+            enhanced = f"{' | '.join(recent_context)} | Câu hỏi hiện tại: {current_query}"
+            logger.info(f"🔗 Enhanced query with context (has reference words)")
+            return enhanced
+        
+        return current_query
     
     async def get_conversation_history(self, user_id: int, conversation_id: str, limit: int = 50):
         """Retrieve conversation history"""
@@ -610,29 +899,11 @@ ID: {invoice_id}
         Returns:
             ChatResponse with greeting message
         """
-        greeting_message = """👋 **Xin chào! Tôi là Trợ lý Hóa đơn thông minh của bạn.**
+        greeting_message = """👋 Xin chào! Tôi là Trợ lý Hóa đơn thông minh.
 
-Tôi có thể giúp bạn:
+Tôi có thể giúp bạn tìm kiếm, thống kê và quản lý hóa đơn.
 
-🔍 **Tìm kiếm & Tra cứu:**
-• "Tìm hóa đơn công ty ABC"
-• "Hóa đơn tháng này"
-• "Có bao nhiêu hóa đơn trong database?"
-
-📊 **Thống kê & Phân tích:**
-• "Thống kê chi tiêu tháng này"
-• "Tổng chi phí quý 4"
-• "So sánh doanh thu các tháng"
-
-💰 **Tính toán:**
-• "Tổng tiền hóa đơn hôm nay"
-• "Chi bao nhiêu tuần này?"
-
-📤 **Xuất báo cáo:**
-• "Xuất hóa đơn ra Excel"
-• "Tạo báo cáo PDF"
-
-💡 **Gợi ý:** Hãy thử hỏi tôi bất cứ điều gì về hóa đơn của bạn!"""
+💡 Gõ **"Chatbot có thể làm gì?"** để xem đầy đủ chức năng."""
 
         return ChatResponse(
             response=greeting_message,

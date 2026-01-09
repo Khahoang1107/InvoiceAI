@@ -122,14 +122,11 @@ except Exception as e:
 
 # Import Groq tools
 try:
-    # Temporarily disabled due to missing dependencies
-    # from groq_tools import GroqDatabaseTools, DecimalEncoder
-    # groq_tools = GroqDatabaseTools(db_tools)
+    from groq_tools import GroqDatabaseTools, DecimalEncoder
+    groq_tools = GroqDatabaseTools(db_tools)
     # groq_chat_handler = GroqChatHandler(db_tools=db_tools, groq_tools=groq_tools)
-    groq_tools = None
-    groq_chat_handler = None
-    DecimalEncoder = None
-    logger.info("✅ Groq tools disabled (dependencies not available)")
+    groq_chat_handler = None  # Legacy handler not used
+    logger.info("✅ Groq tools initialized")
 except Exception as e:
     logger.warning(f"⚠️ Groq tools not available: {e}")
     groq_tools = None
@@ -138,7 +135,7 @@ except Exception as e:
 
 # Import auth utilities
 try:
-    from utils.auth_utils import get_current_user, get_current_admin_user, get_current_user_or_admin
+    from utils.auth_utils import get_current_user, get_current_admin_user, get_current_user_or_admin, TokenData
     logger.info("✅ Auth utilities initialized")
 except Exception as e:
     logger.warning(f"⚠️ Auth utilities not available: {e}")
@@ -158,7 +155,7 @@ try:
     
     # Import vector service for RAG
     try:
-        from services.vector_store import get_vector_service
+        from rag.vector_store import get_vector_service
         vector_service = get_vector_service()
         logger.info("✅ Vector service initialized for RAG")
     except Exception as ve:
@@ -1204,10 +1201,15 @@ async def get_invoices(
         if not invoice_service:
             raise HTTPException(status_code=500, detail="Invoice service not available")
 
+        # Get user_id from TokenData object
+        user_id = current_user.user_id
+        logger.info(f"📋 Getting invoices for user {user_id}")
+        
         result = invoice_service.get_invoice_list(
             time_filter=time_filter,
             limit=limit,
-            search_query=search
+            search_query=search,
+            user_id=user_id  # ⭐ Filter by authenticated user
         )
 
         return JSONResponse({
@@ -1307,9 +1309,9 @@ async def get_invoice_statistics():
 
 @app.post("/api/upload", include_in_schema=True)
 @app.post("/api/upload/", include_in_schema=False)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), current_user: TokenData = Depends(get_current_user)):
     """
-    Upload file and process invoice OCR
+    Upload file and process invoice OCR (authenticated endpoint)
     """
     try:
         # Create uploads directory if not exists
@@ -1397,13 +1399,14 @@ async def upload_file(file: UploadFile = File(...)):
                 "total_amount_value": invoice_data.get('total_amount_value', 0),
                 "currency": invoice_data.get('currency', 'VNĐ'),
                 "confidence_score": confidence,
+                "confidence": confidence,  # ⭐ Add this for frontend
                 "items": invoice_data.get('items', [])
             }
             
             # Save to database
             if db_tools:
                 invoice_db_data = {
-                    "user_id": 1,  # Default user ID for anonymous uploads
+                    "user_id": current_user.user_id,  # Use authenticated user ID
                     "filename": file.filename,
                     "filepath": file_path,
                     "invoice_code": invoice['invoice_code'],

@@ -20,7 +20,7 @@ class InvoiceService:
         self.ocr_service = ocr_service
 
         # Setup upload directory using pathlib
-        self.UPLOAD_DIR = Path("backend/uploads")
+        self.UPLOAD_DIR = Path("uploads")  # Relative to where server runs from
         self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 Upload directory ready: {self.UPLOAD_DIR.absolute()}")
 
@@ -45,7 +45,7 @@ class InvoiceService:
         logger.info(f"💾 File saved: {file_path} ({file_path.stat().st_size} bytes)")
         return file_path
 
-    def get_invoice_list(self, time_filter: str = "all", limit: int = 20, search_query: Optional[str] = None) -> Dict[str, Any]:
+    def get_invoice_list(self, time_filter: str = "all", limit: int = 20, search_query: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Get list of invoices with optional filtering and search
 
@@ -53,6 +53,7 @@ class InvoiceService:
             time_filter: Time filter ("all", "today", "yesterday", "week", "month")
             limit: Maximum number of invoices to return
             search_query: Search query string
+            user_id: Filter by specific user ID (optional)
 
         Returns:
             Dict containing invoice list and metadata
@@ -60,16 +61,17 @@ class InvoiceService:
         if not self.db_tools:
             raise Exception("Database not available")
 
-        logger.info(f"📋 Getting invoices - filter: {time_filter}, limit: {limit}")
+        logger.info(f"📋 Getting invoices - filter: {time_filter}, limit: {limit}, user_id: {user_id}")
 
-        # Get all invoices
-        invoices = self.db_tools.get_all_invoices(limit=limit)
+        # Get all invoices (filtered by user if provided)
+        invoices = self.db_tools.get_all_invoices(limit=limit, user_id=user_id)
 
         if not invoices:
             return {
                 "success": True,
                 "message": "Không có hóa đơn nào",
-                "data": [],
+                "invoices": [],  # ⭐ Frontend expects "invoices" key
+                "total": 0,       # ⭐ Frontend expects "total" key
                 "count": 0
             }
 
@@ -86,7 +88,8 @@ class InvoiceService:
         return {
             "success": True,
             "message": f"Tìm thấy {len(invoices)} hóa đơn",
-            "data": invoices,
+            "invoices": invoices,  # ⭐ Frontend expects "invoices" key
+            "total": len(invoices),  # ⭐ Frontend expects "total" key
             "count": len(invoices)
         }
 

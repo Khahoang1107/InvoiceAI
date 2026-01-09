@@ -175,7 +175,7 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # Groq AI
-GROQ_API_KEY=YOUR_GROQ_API_KEY_HERE
+GROQ_API_KEY=your-groq-api-key-here
 GROQ_MODEL=llama-3.1-8b-instant
 
 # Pinecone Vector Database
